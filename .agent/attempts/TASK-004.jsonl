@@ -1,0 +1,2 @@
+{"ts": "2026-11-06T16:08:24+0900", "epoch": 1793948904, "task": "TASK-004", "attempt": 1, "result": "pass", "duration_sec": 4}
+{"ts": "2026-11-06T16:31:28+0900", "epoch": 1793950288, "task": "TASK-004", "attempt": 2, "result": "pass", "duration_sec": 9}

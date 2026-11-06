@@ -1,14 +1,18 @@
 import WebKit
 
 /// What every web view shares: one cookie/cache store (one Networking process), one
-/// compiled set of tracker rules, and a user agent identical to Safari's, so Feather
-/// doesn't stand out to fingerprinting scripts.
+/// compiled set of tracker rules, the login-form script, and a user agent identical to
+/// Safari's, so Feather doesn't stand out to fingerprinting scripts.
 @MainActor
 final class WebKitEnvironment {
     static let shared = WebKitEnvironment()
 
     let dataStore = WKWebsiteDataStore.default()
-    private let contentController = WKUserContentController()
+    private let contentController: WKUserContentController = {
+        let controller = WKUserContentController()
+        PasswordManager.shared.install(in: controller)
+        return controller
+    }()
     private let applicationName: String = {
         let safari = NSDictionary(contentsOfFile: "/Applications/Safari.app/Contents/Info.plist")
         let version = safari?["CFBundleShortVersionString"] as? String ?? "26.0"

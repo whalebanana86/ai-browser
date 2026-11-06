@@ -4,6 +4,7 @@ import AppKit
 enum MainMenu {
     private typealias Browser = BrowserWindowController
     private static let bookmarksMenu = BookmarksMenu(store: .shared)
+    private static let accountsMenu = AccountsMenu(manager: .shared)
 
     static func build() -> NSMenu {
         let main = NSMenu()
@@ -59,6 +60,13 @@ enum MainMenu {
         ])
         bookmarks.submenu?.delegate = bookmarksMenu
         main.addItem(bookmarks)
+        let accounts = submenu("계정", [
+            item("계정 채우기", #selector(Browser.fillPasswordAction(_:)), "\\"),
+            item("‘저장 안 함’ 사이트 목록 비우기", #selector(Browser.clearNeverSaveAction(_:))),
+            .separator(),
+        ])
+        accounts.submenu?.delegate = accountsMenu
+        main.addItem(accounts)
         let windowMenu = submenu("윈도우", [
             item("최소화", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("확대/축소", #selector(NSWindow.performZoom(_:))),

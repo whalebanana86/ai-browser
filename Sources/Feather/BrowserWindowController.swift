@@ -7,6 +7,7 @@ private extension NSToolbarItem.Identifier {
     static let reload = Self("reload")
     static let address = Self("address")
     static let bookmark = Self("bookmark")
+    static let password = Self("password")
     static let status = Self("status")
 }
 
@@ -24,6 +25,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     var persistsSession = true
     /// Tests swap in a store backed by a temporary file.
     var bookmarks = BookmarkStore.shared
+    /// Tests swap in a manager with a throwaway store.
+    var passwords = PasswordManager.shared {
+        didSet { connectPasswords() }
+    }
 
     private var closedTabs: [Tab] = []
     private let tabStrip = TabStripView(frame: NSRect(x: 0, y: 0, width: 800, height: 34))
@@ -66,6 +71,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         NotificationCenter.default.addObserver(forName: BookmarkStore.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateToolbar() }
         }
+        connectPasswords()
+    }
+
+    private func connectPasswords() {
+        passwords.onOffer = { [weak self] offer, _ in self?.askToSave(offer) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -212,7 +222,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.back, .forward, .reload, .address, .bookmark, .status]
+        [.back, .forward, .reload, .address, .bookmark, .password, .status]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -227,6 +237,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .forward: configureButton(item, symbol: "chevron.right", label: "앞으로", action: #selector(goForwardAction(_:)))
         case .reload: configureButton(item, symbol: "arrow.clockwise", label: "새로고침", action: #selector(reloadOrStop(_:)))
         case .bookmark: configureButton(item, symbol: "star", label: "북마크", action: #selector(toggleBookmarkAction(_:)))
+        case .password: configureButton(item, symbol: "key", label: "계정 채우기", action: #selector(fillPasswordAction(_:)))
         case .address:
             item.label = "주소"
             item.view = addressField
@@ -314,6 +325,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             star.isEnabled = BookmarkStore.canBookmark(url)
             star.image = NSImage(systemSymbolName: marked ? "star.fill" : "star", accessibilityDescription: nil)
             star.toolTip = marked ? "북마크에서 제거 (⌘D)" : "이 페이지 북마크 (⌘D)"
+        }
+        if let key = toolbarItems[.password] {
+            let saved = passwords.accounts(for: tab?.webView).count
+            key.isEnabled = saved > 0
+            key.toolTip = saved > 0 ? "저장된 계정 채우기 (⌘\\)" : "이 사이트에 저장된 계정 없음"
         }
         updateAddressField()
         window?.title = tab?.displayTitle ?? "Feather"
@@ -428,6 +444,119 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         flash("북마크를 삭제했습니다")
     }
 
+    // MARK: Accounts
+
+    private func askToSave(_ offer: PasswordManager.Offer) {
+        guard let window else { return }
+        let alert = NSAlert()
+        switch offer {
+        case .save(let credential):
+            alert.messageText = "\(credential.host)의 계정을 저장할까요?"
+            alert.informativeText = Self.accountName(credential.username) + "\n비밀번호는 macOS 키체인에 저장되고, 계정 채우기(⌘\\)를 누를 때만 입력됩니다."
+            alert.addButton(withTitle: "저장")
+            alert.addButton(withTitle: "나중에")
+            alert.addButton(withTitle: "이 사이트는 저장 안 함")
+        case .update(let credential):
+            alert.messageText = "\(credential.host)의 \(Self.accountName(credential.username)) 비밀번호를 바꿀까요?"
+            alert.informativeText = "키체인에 저장된 비밀번호를 방금 입력한 것으로 바꿉니다."
+            alert.addButton(withTitle: "업데이트")
+            alert.addButton(withTitle: "나중에")
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated { self?.answer(offer, with: response) }
+        }
+    }
+
+    /// The user's answer to `askToSave`. The password is kept only until this returns.
+    func answer(_ offer: PasswordManager.Offer, with response: NSApplication.ModalResponse) {
+        switch response {
+        case .alertFirstButtonReturn:
+            do {
+                try passwords.accept(offer)
+                flash("계정을 키체인에 저장했습니다")
+                updateToolbar()
+            } catch {
+                flash("저장하지 못했습니다: \(error.localizedDescription)")
+            }
+        case .alertThirdButtonReturn:
+            if case .save(let credential) = offer { passwords.neverSave(credential.host) }
+        default:
+            break
+        }
+    }
+
+    private static func accountName(_ username: String) -> String {
+        username.isEmpty ? "(아이디 없음)" : username
+    }
+
+    /// Fills the page's login form with a saved account; asks which one if there are several.
+    @objc func fillPasswordAction(_ sender: Any?) {
+        let accounts = passwords.accounts(for: activeTab?.webView)
+        guard let first = accounts.first else { return flash("이 사이트에 저장된 계정이 없습니다") }
+        guard accounts.count > 1, let view = window?.contentView else { return fill(first) }
+        let menu = NSMenu()
+        for account in accounts {
+            let item = NSMenuItem(title: Self.accountName(account.username), action: #selector(fillAccount(_:)), keyEquivalent: "")
+            item.representedObject = account
+            item.target = self
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: view.bounds.maxX - 220, y: view.bounds.maxY - 8), in: view)
+    }
+
+    @objc func fillAccount(_ sender: NSMenuItem) {
+        if let account = sender.representedObject as? Account { fill(account) }
+    }
+
+    private func fill(_ account: Account) {
+        guard let webView = activeTab?.webView else { return }
+        Task { @MainActor in
+            switch await passwords.fill(account, in: webView) {
+            case .filled: flash("계정을 채웠습니다")
+            case .usernameOnly: flash("아이디를 채웠습니다 · 다음 단계에서 다시 ⌘\\")
+            case .nothing: flash("채울 로그인 칸을 찾지 못했습니다")
+            }
+        }
+    }
+
+    @objc func openAccountSite(_ sender: NSMenuItem) {
+        guard let account = sender.representedObject as? Account, let url = URL(string: "https://\(account.host)/") else { return }
+        if let tab = activeTab {
+            tab.load(url)
+            showActiveTab()
+        } else {
+            openTab(url)
+        }
+    }
+
+    @objc func deleteAccount(_ sender: NSMenuItem) {
+        guard let account = sender.representedObject as? Account, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "\(account.host)의 \(Self.accountName(account.username)) 계정을 삭제할까요?"
+        alert.informativeText = "키체인에서 이 비밀번호를 지웁니다."
+        alert.addButton(withTitle: "삭제")
+        alert.addButton(withTitle: "취소")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            MainActor.assumeIsolated { self?.removeAccount(account) }
+        }
+    }
+
+    func removeAccount(_ account: Account) {
+        do {
+            try passwords.delete(account)
+            flash("계정을 삭제했습니다")
+            updateToolbar()
+        } catch {
+            flash("삭제하지 못했습니다: \(error.localizedDescription)")
+        }
+    }
+
+    @objc func clearNeverSaveAction(_ sender: Any?) {
+        passwords.clearNeverSave()
+        flash("모든 사이트에서 다시 계정 저장을 묻습니다")
+    }
+
     @objc func reloadOrStop(_ sender: Any?) {
         guard let tab = activeTab else { return }
         if tab.isLoading { tab.webView?.stopLoading() } else { tab.reload() }
@@ -470,6 +599,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
              #selector(zoomOutAction(_:)), #selector(actualSizeAction(_:)):
             return activeTab?.webView != nil
         case #selector(selectTabByNumber(_:)): return item.tag == 9 || item.tag <= tabs.count
+        case #selector(fillPasswordAction(_:)): return !passwords.accounts(for: activeTab?.webView).isEmpty
+        case #selector(clearNeverSaveAction(_:)): return !passwords.neverSaveHosts.isEmpty
         case #selector(toggleBookmarkAction(_:)):
             let url = activeTab?.displayURL
             item.title = url.map(bookmarks.contains) == true ? "북마크에서 제거" : "이 페이지 북마크"

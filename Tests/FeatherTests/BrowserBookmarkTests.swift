@@ -5,7 +5,8 @@ import Testing
 @testable import Feather
 
 /// The window's bookmark commands, run on a real (unshown) browser window with a temporary
-/// bookmark file and session saving off, so the user's files are never touched.
+/// bookmark file, an in-memory password store and session saving off, so the user's files
+/// and keychain are never touched.
 @MainActor
 struct BrowserBookmarkTests {
     private let folder = FileManager.default.temporaryDirectory.appendingPathComponent("FeatherBrowser-\(UUID().uuidString)")
@@ -16,8 +17,11 @@ struct BrowserBookmarkTests {
         browser.persistsSession = false
         let store = BookmarkStore(file: folder.appendingPathComponent("bookmarks.json"))
         browser.bookmarks = store
+        browser.passwords = PasswordManager(store: MemoryCredentialStore(), defaults: Self.settings)
         return (browser, store)
     }
+
+    private static let settings = UserDefaults(suiteName: "FeatherTests-BrowserBookmark") ?? .standard
 
     private func menuItem(_ action: Selector) -> NSMenuItem {
         NSMenuItem(title: "", action: action, keyEquivalent: "")
