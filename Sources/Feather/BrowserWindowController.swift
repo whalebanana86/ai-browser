@@ -6,6 +6,7 @@ private extension NSToolbarItem.Identifier {
     static let forward = Self("forward")
     static let reload = Self("reload")
     static let address = Self("address")
+    static let bookmark = Self("bookmark")
     static let status = Self("status")
 }
 
@@ -21,6 +22,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     let governor = MemoryGovernor()
     /// Off in benchmark runs so they don't overwrite the user's open tabs.
     var persistsSession = true
+    /// Tests swap in a store backed by a temporary file.
+    var bookmarks = BookmarkStore.shared
 
     private var closedTabs: [Tab] = []
     private let tabStrip = TabStripView(frame: NSRect(x: 0, y: 0, width: 800, height: 34))
@@ -60,6 +63,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         }
         governor.start()
         Downloads.shared.onFinish = { [weak self] file in self?.flash("다운로드 완료 · \(file.lastPathComponent)") }
+        NotificationCenter.default.addObserver(forName: BookmarkStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateToolbar() }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -206,7 +212,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.back, .forward, .reload, .address, .status]
+        [.back, .forward, .reload, .address, .bookmark, .status]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -220,6 +226,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .back: configureButton(item, symbol: "chevron.left", label: "뒤로", action: #selector(goBackAction(_:)))
         case .forward: configureButton(item, symbol: "chevron.right", label: "앞으로", action: #selector(goForwardAction(_:)))
         case .reload: configureButton(item, symbol: "arrow.clockwise", label: "새로고침", action: #selector(reloadOrStop(_:)))
+        case .bookmark: configureButton(item, symbol: "star", label: "북마크", action: #selector(toggleBookmarkAction(_:)))
         case .address:
             item.label = "주소"
             item.view = addressField
@@ -301,6 +308,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         }
         progressBar.isHidden = !loading
         progressBar.progress = tab?.progress ?? 0
+        if let star = toolbarItems[.bookmark] {
+            let url = tab?.displayURL
+            let marked = url.map(bookmarks.contains) ?? false
+            star.isEnabled = BookmarkStore.canBookmark(url)
+            star.image = NSImage(systemSymbolName: marked ? "star.fill" : "star", accessibilityDescription: nil)
+            star.toolTip = marked ? "북마크에서 제거 (⌘D)" : "이 페이지 북마크 (⌘D)"
+        }
         updateAddressField()
         window?.title = tab?.displayTitle ?? "Feather"
     }
@@ -388,6 +402,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func previousTabAction(_ sender: Any?) { cycleTabs(by: -1) }
     @objc func selectTabByNumber(_ sender: NSMenuItem) { selectTab(at: sender.tag == 9 ? tabs.count - 1 : sender.tag - 1) }
 
+    @objc func toggleBookmarkAction(_ sender: Any?) {
+        guard let tab = activeTab, let url = tab.displayURL, BookmarkStore.canBookmark(url) else { return }
+        let marked = bookmarks.toggle(url, title: tab.displayTitle)
+        flash(marked ? "북마크에 추가했습니다" : "북마크에서 제거했습니다")
+    }
+
+    /// Opens in this tab, or in a new background tab with ⌘ held.
+    @objc func openBookmark(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            openTab(url, activate: false, after: activeTab)
+        } else if let tab = activeTab {
+            tab.load(url)
+            showActiveTab()
+            focusPage()
+        } else {
+            openTab(url)
+        }
+    }
+
+    @objc func deleteBookmark(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        bookmarks.remove(url)
+        flash("북마크를 삭제했습니다")
+    }
+
     @objc func reloadOrStop(_ sender: Any?) {
         guard let tab = activeTab else { return }
         if tab.isLoading { tab.webView?.stopLoading() } else { tab.reload() }
@@ -430,6 +470,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
              #selector(zoomOutAction(_:)), #selector(actualSizeAction(_:)):
             return activeTab?.webView != nil
         case #selector(selectTabByNumber(_:)): return item.tag == 9 || item.tag <= tabs.count
+        case #selector(toggleBookmarkAction(_:)):
+            let url = activeTab?.displayURL
+            item.title = url.map(bookmarks.contains) == true ? "북마크에서 제거" : "이 페이지 북마크"
+            return BookmarkStore.canBookmark(url)
         default: return true
         }
     }

@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 enum MainMenu {
     private typealias Browser = BrowserWindowController
+    private static let bookmarksMenu = BookmarksMenu(store: .shared)
 
     static func build() -> NSMenu {
         let main = NSMenu()
@@ -52,6 +53,12 @@ enum MainMenu {
             item("뒤로", #selector(Browser.goBackAction(_:)), "["),
             item("앞으로", #selector(Browser.goForwardAction(_:)), "]"),
         ]))
+        let bookmarks = submenu("북마크", [
+            item("이 페이지 북마크", #selector(Browser.toggleBookmarkAction(_:)), "d"),
+            .separator(),
+        ])
+        bookmarks.submenu?.delegate = bookmarksMenu
+        main.addItem(bookmarks)
         let windowMenu = submenu("윈도우", [
             item("최소화", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("확대/축소", #selector(NSWindow.performZoom(_:))),

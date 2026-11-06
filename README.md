@@ -116,9 +116,17 @@ macOS 13 이상, Xcode(또는 Command Line Tools) 필요. `/Applications`로 옮
 | ⌘[ / ⌘] | 뒤로 / 앞으로 |
 | ⇧⌘] / ⇧⌘[ , ⌘1–9 | 다음·이전 탭, 탭 바로 가기 |
 | ⌘F / ⌘G / ⇧⌘G | 찾기 / 다음 / 이전 |
+| ⌘D | 이 페이지 북마크 / 북마크에서 제거 |
 | ⌘= / ⌘- / ⌘0 | 확대 / 축소 / 실제 크기 |
 
 ⌘클릭이나 휠 클릭을 하면 링크가 백그라운드 탭에서 열립니다. 탭을 휠 클릭하면 닫힙니다.
+
+## 북마크
+
+툴바의 별이나 ⌘D로 지금 페이지를 북마크하고, 메뉴 북마크에서 엽니다(⌘를 누른 채 고르면 새 백그라운드 탭).
+메뉴를 연 채로 ⌥를 누르면 항목이 "삭제"로 바뀝니다. 북마크는
+`~/Library/Application Support/Feather/bookmarks.json`에만 저장되고 동기화·전송은 없습니다.
+파일이 깨져 있으면 `bookmarks.broken.json`으로 옮겨 두고 빈 목록으로 시작합니다.
 
 ## 설정
 
@@ -139,12 +147,12 @@ defaults write local.feather.browser blockAds -bool NO           # 광고 차단
   `_clearBackForwardCache`, `_isPlayingAudio` 등)를 씁니다. 모두 존재 여부를 확인하고 호출하므로,
   macOS 업데이트로 사라지면 해당 기능만 조용히 꺼집니다. 이 때문에 Mac App Store에는 올릴 수 없습니다.
 - 일시 중단된 탭은 다시 열 때 새로 불러옵니다(디스크 캐시 덕에 보통 빠름). 작성 중이던 폼 입력은 남지 않을 수 있습니다.
-- 확장 프로그램, 북마크, 비밀번호 관리, 동기화는 아직 없습니다.
+- 확장 프로그램, 비밀번호 관리, 동기화는 아직 없습니다.
 
 ## 개발과 검증
 
 ```bash
-swift test                     # 단위 테스트 (주소 해석, 추적 파라미터 제거, 추적기 차단 규칙, 메모리 측정, 기본 설정값)
+swift test                     # 단위 테스트 (주소 해석, 추적기·광고 차단 규칙, 북마크, 메모리 측정, 기본 설정값)
 ./scripts/auto-fix-loop.sh     # 빌드 → 타입 검사 → Lint → 테스트, 결과를 .agent/attempts/에 기록
 ```
 
@@ -166,6 +174,7 @@ swift test                     # 단위 테스트 (주소 해석, 추적 파라�
 | `WebKitEnvironment.swift` | 공유 WebKit 설정(데이터 저장소, 규칙, UA) |
 | `URLTools.swift` | 주소창 해석, 추적 파라미터 제거 |
 | `Views.swift` | 탭 바, 주소창, 찾기 막대 등 |
+| `Bookmarks.swift` | 북마크 저장, 북마크 메뉴 |
 | `Benchmark.swift` | `--bench` |
 | `Tests/FeatherTests/` | 단위 테스트 |
 | `scripts/auto-fix-loop.sh`, `.swift-format` | 자동 검증, Lint 설정 |
