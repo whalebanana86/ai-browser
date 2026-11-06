@@ -10,11 +10,15 @@ enum Settings {
     /// Background tabs left untouched this long are suspended.
     static var idleSuspendAfter: TimeInterval { TimeInterval(positive("idleSuspendMinutes") ?? 15) * 60 }
     /// Tracker blocking; turn off only to check whether it's what breaks a site.
-    static var blocksTrackers: Bool {
-        UserDefaults.standard.object(forKey: "blockTrackers") == nil || UserDefaults.standard.bool(forKey: "blockTrackers")
-    }
+    static var blocksTrackers: Bool { enabledUnlessTurnedOff("blockTrackers") }
+    /// Ad blocking, separate from trackers so ads can be allowed without allowing tracking.
+    static var blocksAds: Bool { enabledUnlessTurnedOff("blockAds") }
     /// Search engine; `%s` is replaced by the query.
     static var searchTemplate: String { UserDefaults.standard.string(forKey: "searchURL") ?? "https://duckduckgo.com/?q=%s" }
+
+    private static func enabledUnlessTurnedOff(_ key: String) -> Bool {
+        UserDefaults.standard.object(forKey: key) == nil || UserDefaults.standard.bool(forKey: key)
+    }
 
     private static func positive(_ key: String) -> Int? {
         let value = UserDefaults.standard.integer(forKey: key)

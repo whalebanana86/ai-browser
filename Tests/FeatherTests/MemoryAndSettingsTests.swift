@@ -28,6 +28,7 @@ struct SettingsTests {
         #expect(Settings.memoryBudget == 1024 * 1_048_576)
         #expect(Settings.idleSuspendAfter == 15 * 60)
         #expect(Settings.blocksTrackers)
+        #expect(Settings.blocksAds)
         #expect(Settings.searchTemplate == "https://duckduckgo.com/?q=%s")
     }
 }

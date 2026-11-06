@@ -32,7 +32,7 @@ enum Benchmark {
         Task { @MainActor in
             let sites = self.sites
             let depth = browseDepth
-            log("Feather 벤치마크 · 탭 \(sites.count)개\(depth > 0 ? " · 탭마다 링크 \(depth)번 이동" : "") · 실행 탭 상한 \(Settings.maxLiveTabs)개 · 메모리 예산 \(Settings.memoryBudget / 1_048_576) MB · 추적 차단 \(Settings.blocksTrackers ? "켬" : "끔")\n")
+            log("Feather 벤치마크 · 탭 \(sites.count)개\(depth > 0 ? " · 탭마다 링크 \(depth)번 이동" : "") · 실행 탭 상한 \(Settings.maxLiveTabs)개 · 메모리 예산 \(Settings.memoryBudget / 1_048_576) MB · 추적 차단 \(Settings.blocksTrackers ? "켬" : "끔") · 광고 차단 \(Settings.blocksAds ? "켬" : "끔")\n")
             var firstPaints: [Double] = []
             var peak: UInt64 = 0
             for (number, site) in sites.enumerated() {

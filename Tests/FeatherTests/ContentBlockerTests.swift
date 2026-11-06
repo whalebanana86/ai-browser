@@ -7,12 +7,12 @@ import WebKit
 struct ContentBlockerTests {
     private typealias Rule = [String: [String: Any]]
 
-    private func rules() throws -> [Rule] {
-        let data = Data(ContentBlocker.rulesJSON().utf8)
+    private func rules(trackers: Bool = true, ads: Bool = false) throws -> [Rule] {
+        let data = Data(ContentBlocker.rulesJSON(trackers: trackers, ads: ads).utf8)
         return try #require(try JSONSerialization.jsonObject(with: data) as? [Rule])
     }
 
-    /// Third-party block rules, as compiled regular expressions.
+    /// Tracker block rules, as compiled regular expressions.
     private func blockFilters() throws -> [NSRegularExpression] {
         try rules()
             .filter { $0["action"]?["type"] as? String == "block" && $0["trigger"]?["resource-type"] == nil }
@@ -53,7 +53,7 @@ struct ContentBlockerTests {
         }
     }
 
-    @Test func blockingIsThirdPartyOnly() throws {
+    @Test func trackerBlockingIsThirdPartyOnly() throws {
         for rule in try rules() where rule["trigger"]?["resource-type"] == nil {
             #expect(rule["trigger"]?["load-type"] as? [String] == ["third-party"])
         }
@@ -73,12 +73,14 @@ struct ContentBlockerTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("FeatherTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         let store = try #require(WKContentRuleListStore(url: folder))
-        let json = ContentBlocker.rulesJSON()
-        let list: WKContentRuleList? = try await withCheckedThrowingContinuation { continuation in
-            store.compileContentRuleList(forIdentifier: "test", encodedContentRuleList: json) { list, error in
-                if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: list) }
+        for (trackers, ads) in [(true, true), (true, false), (false, true)] {
+            let json = ContentBlocker.rulesJSON(trackers: trackers, ads: ads)
+            let list: WKContentRuleList? = try await withCheckedThrowingContinuation { continuation in
+                store.compileContentRuleList(forIdentifier: "test", encodedContentRuleList: json) { list, error in
+                    if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: list) }
+                }
             }
+            #expect(list != nil, "trackers: \(trackers), ads: \(ads)")
         }
-        #expect(list != nil)
     }
 }

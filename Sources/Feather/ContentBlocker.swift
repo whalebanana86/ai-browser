@@ -1,8 +1,8 @@
 import WebKit
 
-/// Compiles `TrackerList` into a WebKit content rule list. The rules run inside WebKit's
-/// network layer: blocked requests never leave the machine and cost no JavaScript.
-/// The compiled list is cached on disk, so later launches only look it up.
+/// Compiles `TrackerList` and `AdBlockList` into a WebKit content rule list. The rules run
+/// inside WebKit's network layer: blocked requests never leave the machine and cost no
+/// JavaScript. The compiled list is cached on disk, so later launches only look it up.
 enum ContentBlocker {
     private static let hostPrefix = #"^[^:]+://+([^:/]+\.)?"#
 
@@ -24,24 +24,45 @@ enum ContentBlocker {
         }
     }
 
-    static func rulesJSON() -> String {
+    static func rulesJSON(trackers: Bool = Settings.blocksTrackers, ads: Bool = Settings.blocksAds) -> String {
         var rules: [[String: Any]] = []
         func blockThirdParty(_ filter: String) {
-            rules.append(["trigger": ["url-filter": hostPrefix + filter, "load-type": ["third-party"]],
+            rules.append(["trigger": ["url-filter": filter, "load-type": ["third-party"]],
                           "action": ["type": "block"]])
         }
-        for domain in TrackerList.domains {
-            blockThirdParty(domain.replacingOccurrences(of: ".", with: #"\."#) + "[:/]")
+        // Blocked inside every page, but the address itself still opens (e.g. clicking an ad).
+        func blockUnlessVisited(_ filter: String) {
+            rules.append(["trigger": ["url-filter": filter, "unless-top-url": [filter]],
+                          "action": ["type": "block"]])
         }
-        TrackerList.pathPatterns.forEach(blockThirdParty)
-        // <a ping> and navigator.sendBeacon exist to report clicks and page exits.
-        rules.append(["trigger": ["url-filter": ".*", "resource-type": ["ping"]],
-                      "action": ["type": "block"]])
-        // Never send or store cookies on third-party requests.
-        rules.append(["trigger": ["url-filter": ".*", "load-type": ["third-party"]],
-                      "action": ["type": "block-cookies"]])
+        if trackers {
+            TrackerList.domains.map(hostFilter).forEach(blockThirdParty)
+            TrackerList.pathPatterns.map { hostPrefix + $0 }.forEach(blockThirdParty)
+            // <a ping> and navigator.sendBeacon exist to report clicks and page exits.
+            rules.append(["trigger": ["url-filter": ".*", "resource-type": ["ping"]],
+                          "action": ["type": "block"]])
+            // Never send or store cookies on third-party requests.
+            rules.append(["trigger": ["url-filter": ".*", "load-type": ["third-party"]],
+                          "action": ["type": "block-cookies"]])
+        }
+        if ads {
+            AdBlockList.networks.map(hostFilter).forEach(blockThirdParty)
+            AdBlockList.adHosts.map(hostFilter).forEach(blockUnlessVisited)
+            AdBlockList.adPaths.forEach(blockUnlessVisited)
+            rules.append(["trigger": ["url-filter": ".*"],
+                          "action": ["type": "css-display-none", "selector": AdBlockList.hiddenSelectors.joined(separator: ", ")]])
+            for (site, selectors) in AdBlockList.siteHiddenSelectors.sorted(by: { $0.key < $1.key }) {
+                rules.append(["trigger": ["url-filter": ".*", "if-domain": ["*" + site]],
+                              "action": ["type": "css-display-none", "selector": selectors.joined(separator: ", ")]])
+            }
+        }
         let data = try! JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Matches `domain` and its subdomains, and nothing that merely contains it.
+    private static func hostFilter(_ domain: String) -> String {
+        hostPrefix + domain.replacingOccurrences(of: ".", with: #"\."#) + "[:/]"
     }
 
     private static func fnv1a(_ text: String) -> String {

@@ -15,10 +15,10 @@ final class WebKitEnvironment {
         return "Version/\(version) Safari/605.1.15"
     }()
 
-    /// Loads the tracker rules; web views must not be created before `completion` runs,
+    /// Loads the tracker and ad rules; web views must not be created before `completion` runs,
     /// or their first page would load unprotected.
     func prepare(_ completion: @escaping @MainActor () -> Void) {
-        guard Settings.blocksTrackers else { return completion() }
+        guard Settings.blocksTrackers || Settings.blocksAds else { return completion() }
         ContentBlocker.load { [contentController] list in
             MainActor.assumeIsolated {
                 if let list { contentController.add(list) }

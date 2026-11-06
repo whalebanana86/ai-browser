@@ -61,9 +61,38 @@ macOS 13 이상, Xcode(또는 Command Line Tools) 필요. `/Applications`로 옮
 - 새 탭은 주소를 입력하기 전까지 웹 프로세스를 만들지 않고, 지난 세션의 탭도 누를 때만 불러옵니다.
 - 화면에 보이는 탭 하나만 뷰 계층에 있어 나머지는 WebKit이 타이머·렌더링을 멈춰 둡니다.
 
+## 광고 차단
+
+기본으로 켜져 있습니다. 앱에 목록을 내장해서 필터 목록을 내려받는 요청도 보내지 않습니다
+(`Sources/Feather/AdBlockList.swift`).
+
+- **광고 네트워크** — Venatus, OpenX, RTB House, Innity 등. 다른 사이트에 붙을 때만 막아, 그 회사 사이트는 그대로 열립니다.
+- **포털·언론사가 자기 도메인으로 내보내는 광고** — 네이버(`veta.naver.com`, GFA), 다음·카카오 애드핏,
+  쿠팡 파트너스 배너, 인벤·연합뉴스의 Open AdStream(`/RealMedia/ads/`), 루리웹 배너.
+  자기 사이트에서도 막지만, 광고를 눌러 그 주소로 이동하는 것은 막지 않습니다.
+- **빈 광고 틀 숨김** — 막힌 광고가 남기는 빈 자리를 AdSense·애드핏·Taboola 등의 광고 틀 이름으로 숨깁니다.
+  `.ad`처럼 다른 곳에선 광고가 아닐 수도 있는 이름은 그 이름을 광고에 쓰는 사이트에서만 적용합니다.
+
+2026-11-06 측정 (추적기 차단만 켠 경우 → 광고 차단까지 켠 경우, 각 1회):
+
+| 사이트 | 화면에 보이는 iframe | 불러온 리소스 수 |
+|---|---|---|
+| 네이버 | 6 → 2 | 111 → 73 |
+| 다음 | 5 → 1 | 250 → 150 |
+| 인벤 / 인벤 뉴스 | 3 → 0 / 2 → 0 | 250 → 250 / 172 → 165 |
+| 나무위키 | 3 → 3 | 117 → 52 |
+| 디시인사이드 | 2 → 0 | 72 → 66 |
+| 루리웹 / 게시판 | 9 → 0 / 8 → 1 | 232 → 230 / 36 → 33 |
+
+12개 페이지 모두 광고 차단을 켠 상태에서 정상으로 열렸습니다. 한국경제의 iframe 10개는 유튜브 등 본문 영상이라
+그대로입니다. 웹 프로세스 메모리는 페이지마다 늘거나 줄어 일관된 차이가 없었습니다(1회 측정이라 오차 범위 안).
+
+광고 목록은 직접 고른 것이라 EasyList 같은 공개 필터 목록보다 범위가 좁습니다. 처음 보는 사이트의 광고는
+남아 있을 수 있습니다.
+
 ## 추적 방지
 
-- **추적기·광고망 차단** — Google Analytics·태그 매니저, 메타 픽셀, Criteo, 세션 녹화 서비스 등과
+- **추적기 차단** — Google Analytics·태그 매니저, 메타 픽셀, Criteo, 세션 녹화 서비스 등과
   네이버·카카오 분석 스크립트, 국내 광고망을 포함해 약 160개 도메인을 WebKit 콘텐츠 규칙으로 차단합니다
   (`Sources/Feather/TrackerList.swift`). 차단은 WebKit 네트워크 계층에서 일어나 요청이 아예 나가지 않습니다.
 - **제3자 쿠키 차단**, `<a ping>`·`sendBeacon` 차단.
@@ -101,6 +130,7 @@ defaults write local.feather.browser memoryBudgetMB -int 1536    # 메모리 예
 defaults write local.feather.browser idleSuspendMinutes -int 30  # 유휴 중단 시간 (기본 15분)
 defaults write local.feather.browser searchURL "https://www.google.com/search?q=%s"
 defaults write local.feather.browser blockTrackers -bool NO      # 사이트가 깨질 때 원인 확인용
+defaults write local.feather.browser blockAds -bool NO           # 광고 차단 끄기 (추적기 차단은 그대로)
 ```
 
 ## 알아둘 점
@@ -132,7 +162,7 @@ swift test                     # 단위 테스트 (주소 해석, 추적 파라�
 | `Tab.swift` | 탭 하나: 내비게이션, 일시 중단·복원, 로드 시간 측정, 오류 페이지 |
 | `MemoryGovernor.swift` | 메모리 예산에 맞춰 탭 중단 |
 | `MemoryMeter.swift` | 앱 + WebKit 프로세스 전체 메모리 측정 |
-| `ContentBlocker.swift`, `TrackerList.swift` | 추적기 차단 규칙 |
+| `ContentBlocker.swift`, `TrackerList.swift`, `AdBlockList.swift` | 추적기·광고 차단 규칙 |
 | `WebKitEnvironment.swift` | 공유 WebKit 설정(데이터 저장소, 규칙, UA) |
 | `URLTools.swift` | 주소창 해석, 추적 파라미터 제거 |
 | `Views.swift` | 탭 바, 주소창, 찾기 막대 등 |
