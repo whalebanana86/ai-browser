@@ -111,3 +111,24 @@ struct BookmarkTests {
         #expect(menu.items.map(\.title) == ["이 페이지 북마크", "", "a", "삭제: a"])
     }
 }
+
+@MainActor
+struct AutocompletionTests {
+    @Test func feathersOwnFieldsHaveNoAutocompletion() throws {
+        for field in [AddressField() as NSTextField, FindBar(frame: NSRect(x: 0, y: 0, width: 300, height: 36)).field] {
+            #expect(!field.isAutomaticTextCompletionEnabled)
+        }
+        _ = NSApplication.shared
+        let browser = BrowserWindowController()
+        browser.persistsSession = false
+        let window = try #require(browser.window)
+        let editor = try #require(window.fieldEditor(true, for: nil) as? NSTextView)
+        if #available(macOS 14, *) { #expect(editor.inlinePredictionType == .no, "no grey inline predictions") }
+        #expect(!editor.isAutomaticTextCompletionEnabled)
+    }
+
+    @Test func pagesInputsHaveNoInlinePredictions() {
+        let webView = WebKitEnvironment.shared.makeWebView()
+        if #available(macOS 14, *) { #expect(!webView.configuration.allowsInlinePredictions) }
+    }
+}

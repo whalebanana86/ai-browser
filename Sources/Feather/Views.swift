@@ -156,6 +156,22 @@ private final class TabItemView: NSView {
     @objc private func closeClicked() { strip?.close(index) }
 }
 
+/// No macOS word completion in Feather's own text fields. The grey inline predictions belong to
+/// the window's field editor, which `disableInlinePredictions(in:)` turns off.
+@MainActor
+func disableAutocompletion(_ field: NSTextField) {
+    field.isAutomaticTextCompletionEnabled = false
+}
+
+/// Turns off the grey inline predictions in every text field of `window`: they're drawn by the
+/// window's shared field editor.
+@MainActor
+func disableInlinePredictions(in window: NSWindow) {
+    guard #available(macOS 14, *), let editor = window.fieldEditor(true, for: nil) as? NSTextView else { return }
+    editor.inlinePredictionType = .no
+    editor.isAutomaticTextCompletionEnabled = false
+}
+
 /// Address bar: selects everything on focus, submits on Return, reverts on Escape.
 final class AddressField: NSTextField, NSTextFieldDelegate {
     var onSubmit: ((String) -> Void)?
@@ -171,6 +187,7 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
         usesSingleLineMode = true
         lineBreakMode = .byTruncatingTail
         cell?.isScrollable = true
+        disableAutocompletion(self)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -265,6 +282,7 @@ final class FindBar: NSVisualEffectView, NSSearchFieldDelegate {
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
         field.placeholderString = "페이지에서 찾기"
+        disableAutocompletion(field)
         field.delegate = self
         field.frame = NSRect(x: 8, y: (frame.height - 24) / 2, width: frame.width - 40, height: 24)
         let close = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "닫기")!,

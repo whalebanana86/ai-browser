@@ -72,6 +72,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.tabbingMode = .disallowed
         window.isRestorable = false
         window.minSize = NSSize(width: 560, height: 360)
+        disableInlinePredictions(in: window)
         super.init(window: window)
         window.delegate = self
         buildToolbar(in: window)

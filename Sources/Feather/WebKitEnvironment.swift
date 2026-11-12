@@ -49,6 +49,8 @@ final class WebKitEnvironment {
         config.mediaTypesRequiringUserActionForPlayback = .audio
         config.upgradeKnownHostsToHTTPS = true
         config.preferences.isElementFullscreenEnabled = true
+        // No grey inline predictions in pages' text inputs either.
+        if #available(macOS 14, *) { config.allowsInlinePredictions = false }
         return config
     }
 }
