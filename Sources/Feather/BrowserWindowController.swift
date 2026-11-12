@@ -35,7 +35,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         let translator = PageTranslator(translate: translate)
         translator.onProgress = { [weak self] webView, done in
             guard self?.activeTab?.webView === webView else { return }
-            self?.flash("번역 중 · \(done)문단 (스크롤하는 곳을 따라 번역)")
+            self?.flash("번역 중 · \(done)문단")
         }
         translator.onStopped = { [weak self] _, reason in
             self?.flash("번역을 껐습니다 · \(reason)")
@@ -649,7 +649,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             let outcome = await translator.toggle(webView)
             updateToolbar()
             switch outcome {
-            case .translated(let blocks): flash("화면 \(blocks)문단 번역 · 스크롤·새 글·다음 페이지도 계속 번역 (⌥⌘T 끄기)")
+            case .translated(let blocks): flash("화면 \(blocks)문단 번역")
             case .alreadyInTargetLanguage: flash("이미 번역할 언어입니다 · 다른 언어 글이 나오면 번역합니다")
             case .nothingToTranslate: flash("아직 번역할 글이 없습니다 · 글이 생기면 번역합니다")
             case .stopped: flash(showing ? "번역을 끄고 원문으로 되돌렸습니다" : "번역을 멈췄습니다")
