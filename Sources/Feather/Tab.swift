@@ -153,6 +153,26 @@ final class Tab: NSObject {
         return await webView.requestMediaPlaybackState() == .playing
     }
 
+    /// True while the page is in the middle of something a reload would throw away: a login
+    /// (a visible password or one-time-code field) or text the user typed. Only whether a field
+    /// changed is checked, never what's in it, and in a world page scripts can't reach.
+    func hasWorkInProgress() async -> Bool {
+        guard let webView else { return false }
+        let result = try? await webView.callAsyncJavaScript(Self.workInProgressScript, arguments: [:], in: nil, contentWorld: .defaultClient)
+        return result as? Bool ?? false
+    }
+
+    static let workInProgressScript = #"""
+        const shown = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+        const codeName = /otp|one.?time|code|verif|pin\b|2fa|mfa|totp|passcode|인증|보안.?코드/i;
+        const fields = [...document.querySelectorAll('input, textarea')].filter(shown);
+        const describes = f => [f.name, f.id, f.placeholder, f.getAttribute('aria-label'), f.autocomplete].join(' ');
+        const login = fields.some(f => f.type === 'password' || /one-time-code/.test(f.autocomplete || '')
+            || (['text', 'tel', 'number', ''].includes(f.type) && codeName.test(describes(f))));
+        const typed = fields.some(f => f.type !== 'search' && f.type !== 'hidden' && f.value !== f.defaultValue);
+        return login || typed;
+        """#
+
     private func open(_ url: URL, in webView: WKWebView) {
         if url.isFileURL {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
