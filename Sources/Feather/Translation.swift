@@ -157,7 +157,7 @@ enum TranslationLanguage {
 /// Started on the first request, ended after `idleTimeout` without one.
 @MainActor
 final class TranslatorProcess {
-    static let shared = TranslatorProcess(executable: TranslatorProcess.bundledHelper, model: Settings.translationModel)
+    static let shared = TranslatorProcess(executable: TranslatorProcess.bundledHelper) { Settings.translationModel }
 
     enum Failure: LocalizedError, Equatable {
         case missingHelper, missingModel, timedOut, crashed
@@ -182,7 +182,8 @@ final class TranslatorProcess {
     }
 
     let executable: URL?
-    let model: URL?
+    /// Looked up each time the helper starts, so a model downloaded while Feather runs is found.
+    private let locateModel: () -> URL?
     var idleTimeout: TimeInterval = 120
     /// The helper's pid while it runs, so memory accounting can leave it out of the tabs' total.
     private(set) var pid: pid_t?
@@ -196,10 +197,16 @@ final class TranslatorProcess {
     private var nextID = 1
     private var idleGeneration = 0
 
-    init(executable: URL?, model: URL?) {
+    init(executable: URL?, locateModel: @escaping () -> URL?) {
         self.executable = executable
-        self.model = model
+        self.locateModel = locateModel
     }
+
+    convenience init(executable: URL?, model: URL?) {
+        self.init(executable: executable) { model }
+    }
+
+    var hasModel: Bool { locateModel() != nil }
 
     /// Model memory, separate from the tabs': the helper's physical footprint, 0 when not running.
     var footprint: UInt64 { pid.map(MemoryMeter.footprint(of:)) ?? 0 }
@@ -232,7 +239,7 @@ final class TranslatorProcess {
 
     private func launch() throws {
         guard let executable else { throw Failure.missingHelper }
-        guard let model else { throw Failure.missingModel }
+        guard let model = locateModel() else { throw Failure.missingModel }
         let process = Process()
         process.executableURL = executable
         process.arguments = ["--model", model.path]

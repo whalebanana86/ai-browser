@@ -598,10 +598,52 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         flash("모든 사이트에서 다시 계정 저장을 묻습니다")
     }
 
+    /// Whether the translation model is on this Mac; tests answer for it.
+    var translationModelAvailable: () -> Bool = { TranslatorProcess.shared.hasModel }
+    /// Asks before downloading the model; tests answer for the user.
+    lazy var askToDownloadModel: (@escaping (Bool) -> Void) -> Void = { [weak self] reply in
+        guard let window = self?.window else { return reply(false) }
+        let alert = NSAlert()
+        alert.messageText = "번역 모델을 내려받을까요?"
+        let size = ByteCountFormatter.string(fromByteCount: ModelDownloader.totalBytes, countStyle: .file)
+        alert.informativeText = """
+            Mac 안에서 번역하려면 Hy-MT2-1.8B 번역 모델(\(size))이 한 번 필요합니다.
+            Hugging Face(\(ModelDownloader.repository))에서 모델 파일만 받고, 페이지 내용은 어디에도 보내지 않습니다.
+            받은 파일은 하나하나 확인한 뒤 ~/Library/Application Support/Feather/Models에 저장합니다.
+            """
+        alert.addButton(withTitle: "내려받기")
+        alert.addButton(withTitle: "취소")
+        alert.beginSheetModal(for: window) { response in
+            MainActor.assumeIsolated { reply(response == .alertFirstButtonReturn) }
+        }
+    }
+    lazy var modelDownloader = ModelDownloader()
+
+    /// Asks, downloads with progress in the status bar, then translates `webView` right away.
+    func offerModelDownload(for webView: WKWebView) {
+        guard !modelDownloader.isRunning else { return flash("번역 모델을 내려받는 중입니다") }
+        askToDownloadModel { [weak self] agreed in
+            guard agreed, let self else { return }
+            Task { @MainActor in
+                do {
+                    _ = try await self.modelDownloader.download { done, total in
+                        let percent = total > 0 ? Int(done * 100 / total) : 0
+                        self.flash("번역 모델 내려받는 중 \(percent)% · \(Self.format(UInt64(done))) / \(Self.format(UInt64(total)))")
+                    }
+                    self.flash("번역 모델 준비 완료")
+                    if self.activeTab?.webView === webView, !self.translator.isTranslated(webView) { self.toggleTranslationAction(nil) }
+                } catch {
+                    self.flash(error.localizedDescription)
+                }
+            }
+        }
+    }
+
     /// Translates the page on the device, or shows the original again.
     @objc func toggleTranslationAction(_ sender: Any?) {
         guard let webView = activeTab?.webView else { return }
         let showing = translator.isTranslated(webView)
+        if !showing, !translationModelAvailable() { return offerModelDownload(for: webView) }
         if !showing { flash(TranslatorProcess.shared.isRunning ? "번역 중…" : "번역 모델 불러오는 중…") }
         Task { @MainActor in
             let outcome = await translator.toggle(webView)

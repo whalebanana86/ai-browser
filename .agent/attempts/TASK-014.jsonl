@@ -1,0 +1,2 @@
+{"ts": "2026-11-12T16:01:38+0900", "epoch": 1794466898, "task": "TASK-014", "attempt": 1, "result": "fail", "step": "lint", "exit_code": 1, "duration_sec": 6, "signature": "lint:7a10ac8289c1", "errors": ["Tests/FeatherTests/ModelDownloaderTests.swift: warning: [DoNotUseSemicolons] remove ';' and move the next statement to a new line"]}
+{"ts": "2026-11-12T16:02:14+0900", "epoch": 1794466934, "task": "TASK-014", "attempt": 2, "result": "pass", "duration_sec": 12}
