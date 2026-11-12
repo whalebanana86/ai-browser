@@ -20,7 +20,7 @@ protocol TabHost: AnyObject {
 /// reports critical pressure.
 /// Over budget, the biggest background tabs go first, so as few tabs as possible need reloading;
 /// otherwise the least recently used. Tabs playing audio or using the camera/microphone are
-/// spared, unless macOS reports critical pressure or memory passes the hard limit (budget + 25%).
+/// spared too (music or a video keeps going in the background), unless macOS reports critical pressure.
 @MainActor
 final class MemoryGovernor {
     weak var host: TabHost?
@@ -28,6 +28,9 @@ final class MemoryGovernor {
     private(set) var peak: UInt64 = 0
     /// Live-tab limit; tests set their own instead of changing the shared setting.
     var maxLiveTabs: () -> Int = { Settings.maxLiveTabs }
+    /// Memory budget and media check; tests set their own.
+    var memoryBudget: () -> UInt64 = { Settings.memoryBudget }
+    var isPlayingMedia: (Tab) async -> Bool = { await $0.isUsingMedia() }
 
     private var timer: Timer?
     private var pressureSource: DispatchSourceMemoryPressure?
@@ -50,6 +53,12 @@ final class MemoryGovernor {
         pressureSource = source
     }
 
+    /// Stops the periodic checks (tests drive checks themselves).
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
     /// Coalesces bursts (several tabs finishing at once) into one check.
     func setNeedsCheck(after delay: TimeInterval = 0.5) {
         guard !checkScheduled else { return }
@@ -70,7 +79,8 @@ final class MemoryGovernor {
 
         let now = Date()
         let footprint = { (tab: Tab) in tab.webView?.processIdentifier.flatMap { sample.byPID[$0] } ?? 0 }
-        let short = sample.total > Settings.memoryBudget || !pressure.isEmpty
+        let budget = memoryBudget()
+        let short = sample.total > budget || !pressure.isEmpty
         let candidates = host.tabs
             .filter { $0.isLive && $0 !== host.activeTab }
             .sorted { short ? footprint($0) > footprint($1) : $0.lastActive < $1.lastActive }
@@ -85,11 +95,10 @@ final class MemoryGovernor {
             for tab in candidates {
                 let idle = now.timeIntervalSince(tab.lastActive) > Settings.idleSuspendAfter
                 let overCount = live > maxLiveTabs()
-                let overBudget = projected > Settings.memoryBudget
+                let overBudget = projected > budget
                 guard idle || overCount || overBudget || !pressure.isEmpty else { continue }
-                let hardLimit = Settings.memoryBudget + Settings.memoryBudget / 4
-                let spareMedia = !pressure.contains(.critical) && projected <= hardLimit
-                if spareMedia, await tab.isUsingMedia() { continue }
+                // Playing media keeps going however much memory is in use; only critical pressure stops it.
+                if !pressure.contains(.critical), await isPlayingMedia(tab) { continue }
                 if !pressure.contains(.critical), await tab.hasWorkInProgress() { continue }
                 // The user may have switched to this tab while we were waiting.
                 guard tab.isLive, tab !== host.activeTab else { continue }

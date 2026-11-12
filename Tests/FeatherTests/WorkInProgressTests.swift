@@ -13,11 +13,13 @@ struct WorkInProgressTests {
     private func loaded(_ html: String, in browser: BrowserWindowController? = nil) async throws -> Tab {
         let url = try #require(URL(string: "data:text/html;charset=utf-8," + (html.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")))
         let tab = browser?.openTab(url, activate: false) ?? Tab(url: url)
-        await withCheckedContinuation { continuation in
-            tab.onLoadFinished = { _ in continuation.resume() }
-            tab.wake()
+        // Wait for the load itself, not `onLoadFinished`: that also waits for a paint-timing
+        // script, whose timers WebKit throttles in off-screen views when many tests run at once.
+        let webView = tab.wake()
+        for _ in 0..<100 where webView.isLoading || webView.url == nil {
+            try await Task.sleep(nanoseconds: 50_000_000)
         }
-        tab.onLoadFinished = nil
+        try await Task.sleep(nanoseconds: 100_000_000)
         return tab
     }
 

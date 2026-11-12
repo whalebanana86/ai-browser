@@ -1,0 +1,2 @@
+{"ts": "2026-11-12T17:17:30+0900", "epoch": 1794471450, "task": "TASK-018", "attempt": 1, "result": "fail", "step": "lint", "exit_code": 1, "duration_sec": 6, "signature": "lint:4c64620d64c3", "errors": ["Tests/FeatherTests/MediaTabTests.swift: warning: [DoNotUseSemicolons] remove ';' and move the next statement to a new line"]}
+{"ts": "2026-11-12T17:18:33+0900", "epoch": 1794471513, "task": "TASK-018", "attempt": 2, "result": "pass", "duration_sec": 12}
