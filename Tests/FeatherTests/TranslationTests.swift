@@ -43,6 +43,24 @@ struct ScriptCheckTests {
 }
 
 struct TranslationLanguageTests {
+    /// On a Korean page with foreign posts, each block decides for itself.
+    @Test func eachBlockIsJudgedOnItsOwn() {
+        let korean = (code: "ko", name: "Korean")
+        #expect(TranslationLanguage.needsNoTranslation("@lgvpid 님에게 보내는 답글", target: korean))
+        #expect(TranslationLanguage.needsNoTranslation("대한민국에서 트렌드 중", target: korean))
+        #expect(!TranslationLanguage.needsNoTranslation("メンバが優秀なのは嬉しいけど AI 使って成果物をバンバン上げてきて全然見切れない。", target: korean))
+        #expect(!TranslationLanguage.needsNoTranslation("本来是算3的，ai合成的就不算", target: korean))
+        #expect(!TranslationLanguage.needsNoTranslation("Segundo ato? Dragon ball super legends tá vindo ai", target: korean))
+        #expect(!TranslationLanguage.needsNoTranslation("ぺんぎん님: メンバが優秀なのは嬉しいけどAI使って成果物を上げてきて全然見切れない", target: korean),
+                "mostly foreign with a little Korean is still translated")
+        #expect(TranslationLanguage.needsNoTranslation("이 글은 대부분 한국어이고 AI라는 단어만 영어입니다", target: korean))
+        #expect(TranslationLanguage.needsNoTranslation("SunckyGM", target: korean), "a name")
+        #expect(TranslationLanguage.needsNoTranslation("@HydrosPlays", target: korean), "a handle")
+        let english = (code: "en", name: "English")
+        #expect(TranslationLanguage.needsNoTranslation("A web browser is an application for accessing websites.", target: english))
+        #expect(!TranslationLanguage.needsNoTranslation("웹 브라우저는 웹사이트에 접속하기 위한 응용 소프트웨어이다.", target: english))
+    }
+
     @Test func targetIsTheFirstKnownPreferredLanguage() {
         #expect(TranslationLanguage.target(preferred: ["ko-KR", "en-US"]) == ("ko", "Korean"))
         #expect(TranslationLanguage.target(preferred: ["xx-YY", "ja-JP"]) == ("ja", "Japanese"))
@@ -179,10 +197,11 @@ struct PageTextTests {
                                                                   </div>
             <div id="readtime">5 <span style="display: none">minute read</span><span>min read</span></div></a></li></ul>
             """)
-        let block = try #require(try await PageText.next(10, in: page.webView).first)
-        #expect(block.text == "Republicans take an approach that defies logic 5 min read")
-        #expect(try await PageText.apply("공화당은 논리에 어긋나는 접근을 택했다 5분 읽기", to: block.id, in: page.webView))
-        #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "공화당은 논리에 어긋나는 접근을 택했다 5분 읽기")
+        let blocks = try await PageText.next(10, in: page.webView)
+        #expect(blocks.map(\.text) == ["Republicans take an approach that defies logic", "5 min read"], "laid-out lines are their own blocks")
+        let block = try #require(blocks.first)
+        #expect(try await PageText.apply("공화당은 논리에 어긋나는 접근을 택했다", to: block.id, in: page.webView))
+        #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "공화당은 논리에 어긋나는 접근을 택했다")
         #expect(try await page.page("return document.getElementById('date').textContent.trim()") as? String == "Nov 11, 2026", "hidden text untouched")
         try await PageText.restore(in: page.webView)
         #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "Republicans take an approach that defies logic")
@@ -200,6 +219,26 @@ struct PageTextTests {
         let block = try #require(try await PageText.next(10, in: page.webView).first)
         #expect(try await PageText.apply("이야기의 긴 제목", to: block.id, in: page.webView))
         #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "이야기의 긴 제목")
+    }
+
+    /// X posts are `div`s of `span`s; found by layout, the post is one block.
+    @Test func divAndSpanPostsAreOneBlock() async throws {
+        let page = TranslationPage()
+        await page.load(#"<div data-testid="tweetText"><span>最早problem solvingの</span><span>能力はAIで割とどうでも良くなってきてる</span></div>"#)
+        #expect(try await PageText.next(10, in: page.webView).map(\.text) == ["最早problem solvingの能力はAIで割とどうでも良くなってきてる"])
+    }
+
+    /// A "who to follow" cell: name and handle are separate lines, the button is left alone.
+    @Test func followCellsKeepTheirNamesAndButtons() async throws {
+        let page = TranslationPage()
+        await page.load("""
+            <div class="cell"><div><div><span id="name">Hydros Plays Games</span></div><div><span>@HydrosPlays</span></div></div>
+            <button id="follow"><span>Follow back now</span></button></div>
+            """)
+        let blocks = try await PageText.next(10, in: page.webView)
+        #expect(blocks.map(\.text) == ["Hydros Plays Games", "@HydrosPlays"], "the button's text is not taken")
+        for block in blocks { try await PageText.apply("번역", to: block.id, in: page.webView) }
+        #expect(try await page.page("return document.getElementById('follow').textContent") as? String == "Follow back now")
     }
 
     /// A paragraph that starts with a link must not turn link-coloured as a whole.
@@ -266,6 +305,24 @@ struct PageTranslatorTests {
 
     private func text(_ page: TranslationPage, _ id: String) async throws -> String? {
         try await page.page("return document.getElementById('\(id)')?.textContent ?? null") as? String
+    }
+
+    @Test func onAKoreanPageOnlyTheForeignBlocksAreTranslated() async throws {
+        let page = TranslationPage()
+        await page.load("""
+            <div><span id="ui">님에게 보내는 답글이 여기에 표시됩니다</span></div>
+            <div><span id="ja">メンバが優秀なのは嬉しいけど全然見切れない。</span></div>
+            <div><span id="ko">대한민국에서 트렌드 중인 주제입니다</span></div>
+            <div><span id="en">Dragon ball super legends is coming soon</span></div>
+            """)
+        let model = FakeModel()
+        let translator = PageTranslator(target: korean, translate: model.translate)
+        #expect(await translator.toggle(page.webView) == .translated(blocks: 2))
+        #expect(try await text(page, "ja")?.hasPrefix("번역: ") == true)
+        #expect(try await text(page, "en")?.hasPrefix("번역: ") == true)
+        #expect(try await text(page, "ui") == "님에게 보내는 답글이 여기에 표시됩니다")
+        #expect(try await text(page, "ko") == "대한민국에서 트렌드 중인 주제입니다")
+        _ = await translator.toggle(page.webView)
     }
 
     @Test func pagesAlreadyInTheTargetLanguageAreLeftButTheTabStaysOn() async throws {

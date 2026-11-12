@@ -109,6 +109,39 @@ enum TranslationLanguage {
         return ("en", "English")
     }
 
+    /// Scripts only the target language uses, to tell its text from foreign text at a glance:
+    /// on a Korean target, a block is Korean when Hangul is at least half its letters.
+    static func ownScripts(of name: String) -> Set<ScriptCheck.Script> {
+        switch name {
+        case "Korean": return [.hangul]
+        case "Japanese": return [.kana]
+        case "Chinese": return [.han]
+        case "Russian", "Ukrainian": return [.cyrillic]
+        case "Greek": return [.greek]
+        case "Arabic": return [.arabic]
+        case "Hebrew": return [.hebrew]
+        case "Thai": return [.thai]
+        case "Hindi": return [.devanagari]
+        default: return []
+        }
+    }
+
+    /// Whether a block needs no translation: already in the target language, or a single Latin
+    /// token (a name, @handle, hashtag, word of UI) that translating would only garble. Decided
+    /// per block, so a Korean page's foreign posts are still translated.
+    static func needsNoTranslation(_ text: String, target: (code: String, name: String)) -> Bool {
+        let letters = text.unicodeScalars.filter { $0.properties.isAlphabetic }
+        guard !letters.isEmpty else { return true }
+        let scripts = letters.compactMap(ScriptCheck.script(of:))
+        let latinOnly = scripts.allSatisfy { $0 == .latin }
+        if latinOnly, !text.contains(where: \.isWhitespace) { return true }
+        let own = ownScripts(of: target.name)
+        if !own.isEmpty {
+            return scripts.filter(own.contains).count * 2 >= letters.count
+        }
+        return latinOnly && (detect(text) ?? target.code) == target.code
+    }
+
     /// The page's main language, or nil when the text is too short or mixed to tell.
     static func detect(_ text: String) -> String? {
         let recognizer = NLLanguageRecognizer()
@@ -308,60 +341,70 @@ enum PageText {
     }
 
     /// Up to `limit` blocks the user can see now (plus half a screen below), top of the screen
-    /// first. Only these are claimed; the rest wait until scrolling brings them near. Skips what
-    /// isn't actually visible (closed dialogs, hidden menus), code, inputs and editable areas, and
-    /// picks the innermost block so nothing is translated twice.
+    /// first. Blocks are found by layout, not tag, so `div`-and-`span` sites (X, most web apps)
+    /// work: a text's block is its nearest non-inline box, and a block's text is only what's
+    /// directly in it, not in blocks inside it. Only what's on screen is taken; the rest waits
+    /// until scrolling brings it near. Text in buttons, inputs, code and editable areas is left
+    /// alone, as is anything not actually visible.
     static let nextScript = #"""
-        const selector = 'p, li, h1, h2, h3, h4, h5, h6, td, th, dd, dt, blockquote, figcaption, caption, summary, label';
-        const skip = 'pre, code, kbd, samp, script, style, noscript, textarea, input, select, button, svg, math, [contenteditable=""], [contenteditable="true"], [hidden], dialog:not([open])';
-        window.__featherTranslate ??= { next: 1, originals: new Map() };
+        const skip = 'pre, code, kbd, samp, script, style, noscript, textarea, input, select, button, [role="button"], svg, math, [contenteditable=""], [contenteditable="true"], [hidden], dialog:not([open])';
+        window.__featherTranslate ??= { next: 1, originals: new Map(), texts: new Map(), done: new WeakSet() };
         const state = window.__featherTranslate;
+        const isInline = el => { const display = getComputedStyle(el).display; return display === 'inline' || display === 'contents'; };
+        const blockOf = node => {
+            let el = node.parentElement;
+            while (el && el !== document.body && isInline(el)) el = el.parentElement;
+            return el;
+        };
         // Whether it's on screen, not aria-hidden: CNN marks its visible paragraphs aria-hidden.
-        const visible = el => el.checkVisibility ? el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
-            : getComputedStyle(el).visibility !== 'hidden';
+        const visible = el => el.getClientRects().length > 0
+            && (!el.checkVisibility || el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+        const blocks = new Map();
+        const far = new Set();
+        const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (!node.data.trim()) continue;
+            const parent = node.parentElement;
+            if (!parent || parent.closest(skip)) continue;
+            const block = blockOf(node);
+            if (!block || state.done.has(block) || far.has(block)) continue;
+            if (!blocks.has(block)) {
+                const rect = block.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.top > innerHeight * 1.5) { far.add(block); continue; }
+                blocks.set(block, { top: rect.top, nodes: [] });
+            }
+            if (visible(parent)) blocks.get(block).nodes.push(node);
+        }
         const near = [];
-        for (const el of document.body ? document.body.querySelectorAll(selector) : []) {
-            if (el.dataset.featherTid) continue;
-            const rect = el.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.top > innerHeight * 1.5) continue;
-            if (el.closest(skip) || el.querySelector(selector) || !visible(el)) continue;
-            const text = el.innerText.replace(/\s+/g, ' ').trim();
+        for (const [block, info] of blocks) {
+            const text = info.nodes.map(node => node.data).join('').replace(/\s+/g, ' ').trim();
             if (text.length < 2 || !/\p{L}/u.test(text)) continue;
-            near.push({ el, text, top: rect.top });
+            near.push({ block, text, nodes: info.nodes, top: info.top });
         }
         near.sort((a, b) => Math.max(a.top, 0) - Math.max(b.top, 0));
-        return near.slice(0, limit).map(({ el, text }) => {
+        return near.slice(0, limit).map(({ block, text, nodes }) => {
             const id = state.next++;
-            el.dataset.featherTid = String(id);
+            state.done.add(block);
+            block.dataset.featherTid = String(id);
+            state.texts.set(id, nodes);
             return { id, text };
         });
         """#
 
-    /// Puts the translation in place of the block's text without touching a single element:
+    /// Puts the translation in place of the block's own text without touching a single element:
     /// images, links and styled spans stay, and the text keeps the colour and style of the run
     /// it lands in (the longest visible text directly in the block, else the longest visible
-    /// text anywhere). The other visible text is emptied; hidden text is not touched.
+    /// text of the block). The block's other text is emptied; hidden text is not touched.
     static let applyScript = #"""
         const state = window.__featherTranslate;
-        const el = document.querySelector(`[data-feather-tid="${id}"]`);
-        if (!state || !el) return false;
-        // Only text on screen: hidden text (a collapsed date, a screen-reader label) is left
-        // alone, so the translation never lands somewhere invisible.
-        const shown = node => {
-            const parent = node.parentElement;
-            return !parent.closest('script, style, noscript') && parent.getClientRects().length > 0
-                && (!parent.checkVisibility || parent.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
-        };
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-        const nodes = [];
-        while (walker.nextNode()) {
-            if (walker.currentNode.data.trim() && shown(walker.currentNode)) nodes.push(walker.currentNode);
-        }
-        if (!nodes.length) return false;
+        const nodes = state?.texts.get(id)?.filter(node => node.isConnected && node.data.trim());
+        if (!nodes || !nodes.length) return false;
         if (!state.originals.has(id)) state.originals.set(id, nodes.map(node => [node, node.data]));
+        const block = nodes[0].parentElement.closest(`[data-feather-tid="${id}"]`);
         // Longest by the words in it: markup indentation must not make a node look long.
         const length = node => node.data.trim().length;
-        const direct = nodes.filter(node => node.parentNode === el);
+        const direct = nodes.filter(node => node.parentNode === block);
         const target = (direct.length ? direct : nodes).reduce((a, b) => (length(b) > length(a) ? b : a));
         for (const node of nodes) node.data = node === target ? text : '';
         return true;
@@ -491,12 +534,11 @@ final class PageTranslator {
         while watching[key] != nil, webView.url == page {
             let blocks = try await PageText.next(3, in: webView)
             if blocks.isEmpty { break }
-            let sample = blocks.map(\.text).joined(separator: " ")
-            if sample.count >= 40, TranslationLanguage.detect(sample) == target.code {
-                skipped += blocks.count
-                continue
-            }
             for block in blocks {
+                if TranslationLanguage.needsNoTranslation(block.text, target: target) {
+                    skipped += 1
+                    continue
+                }
                 guard watching[key] != nil, webView.url == page else { return .translated(blocks: done) }
                 let text = try await translateChecked(block.text)
                 guard watching[key] != nil, webView.url == page else { return .translated(blocks: done) }
