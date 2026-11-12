@@ -339,22 +339,30 @@ enum PageText {
 
     /// Puts the translation in place of the block's text without touching a single element:
     /// images, links and styled spans stay, and the text keeps the colour and style of the run
-    /// it lands in (the longest text directly in the block, else the longest anywhere). The
-    /// other text nodes are emptied. The original text of each node is kept for restoring.
+    /// it lands in (the longest visible text directly in the block, else the longest visible
+    /// text anywhere). The other visible text is emptied; hidden text is not touched.
     static let applyScript = #"""
         const state = window.__featherTranslate;
         const el = document.querySelector(`[data-feather-tid="${id}"]`);
         if (!state || !el) return false;
+        // Only text on screen: hidden text (a collapsed date, a screen-reader label) is left
+        // alone, so the translation never lands somewhere invisible.
+        const shown = node => {
+            const parent = node.parentElement;
+            return !parent.closest('script, style, noscript') && parent.getClientRects().length > 0
+                && (!parent.checkVisibility || parent.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+        };
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
         const nodes = [];
         while (walker.nextNode()) {
-            const node = walker.currentNode;
-            if (node.data.trim() && !node.parentElement.closest('script, style, noscript')) nodes.push(node);
+            if (walker.currentNode.data.trim() && shown(walker.currentNode)) nodes.push(walker.currentNode);
         }
         if (!nodes.length) return false;
         if (!state.originals.has(id)) state.originals.set(id, nodes.map(node => [node, node.data]));
+        // Longest by the words in it: markup indentation must not make a node look long.
+        const length = node => node.data.trim().length;
         const direct = nodes.filter(node => node.parentNode === el);
-        const target = (direct.length ? direct : nodes).reduce((a, b) => (b.data.length > a.data.length ? b : a));
+        const target = (direct.length ? direct : nodes).reduce((a, b) => (length(b) > length(a) ? b : a));
         for (const node of nodes) node.data = node === target ? text : '';
         return true;
         """#

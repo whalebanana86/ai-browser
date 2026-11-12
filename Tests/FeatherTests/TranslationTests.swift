@@ -168,6 +168,40 @@ struct PageTextTests {
         #expect(try await page.page("return document.getElementById('p').children.length") as? Int == 1)
     }
 
+    /// CNN's "Up next" cards hold a hidden date whose markup indentation makes it the longest
+    /// text node; the translation must land in the visible headline, not there.
+    @Test func translationLandsInVisibleTextNotHiddenText() async throws {
+        let page = TranslationPage()
+        await page.load("""
+            <ul><li id="card"><a><div><span id="headline">Republicans take an approach that defies logic</span></div>
+            <div id="date" style="display: none">
+                                                                      Nov 11, 2026
+                                                                  </div>
+            <div id="readtime">5 <span style="display: none">minute read</span><span>min read</span></div></a></li></ul>
+            """)
+        let block = try #require(try await PageText.next(10, in: page.webView).first)
+        #expect(block.text == "Republicans take an approach that defies logic 5 min read")
+        #expect(try await PageText.apply("공화당은 논리에 어긋나는 접근을 택했다 5분 읽기", to: block.id, in: page.webView))
+        #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "공화당은 논리에 어긋나는 접근을 택했다 5분 읽기")
+        #expect(try await page.page("return document.getElementById('date').textContent.trim()") as? String == "Nov 11, 2026", "hidden text untouched")
+        try await PageText.restore(in: page.webView)
+        #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "Republicans take an approach that defies logic")
+        #expect(try await page.page("return document.getElementById('readtime').innerText") as? String == "5 min read")
+    }
+
+    /// Indentation in the markup must not make a short visible line win over the headline.
+    @Test func longestTextIsMeasuredByItsWordsNotItsWhitespace() async throws {
+        let page = TranslationPage()
+        await page.load("""
+            <ul><li><span id="headline">A long visible headline for the story</span><div id="date">
+                                                                      Nov 11
+                                                                  </div></li></ul>
+            """)
+        let block = try #require(try await PageText.next(10, in: page.webView).first)
+        #expect(try await PageText.apply("이야기의 긴 제목", to: block.id, in: page.webView))
+        #expect(try await page.page("return document.getElementById('headline').textContent") as? String == "이야기의 긴 제목")
+    }
+
     /// A paragraph that starts with a link must not turn link-coloured as a whole.
     @Test func translationGoesIntoTheParagraphsOwnTextNotALink() async throws {
         let page = TranslationPage()
