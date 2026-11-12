@@ -142,9 +142,8 @@ macOS 13 이상, Xcode(또는 Command Line Tools) 필요. `/Applications`로 옮
 다시 누르면 꺼지고 원문으로 돌아갑니다(링크 등 원래 요소가 그대로 돌아옴).
 
 - 번역은 Mac 안에서만 합니다: Tencent Hy-MT2-1.8B(Apache-2.0)의 MLX 4비트 모델. 페이지 글이 밖으로 나가지 않습니다.
-- 모델 위치: `~/Library/Application Support/Feather/Models/hy-mt2-1.8b-4bit`, 없으면 AITranslate가 받아 둔
-  `~/Library/Application Support/AITranslate/Models/hy-mt2-1.8b-4bit`를 읽기만 합니다
-  (`defaults write local.feather.browser translationModelPath <폴더>`로 바꿀 수 있음).
+- 모델 위치: `~/Library/Application Support/Feather/Models/hy-mt2-1.8b-4bit`
+  (`defaults write local.feather.browser translationModelPath <폴더>`로 바꿀 수 있음). 다른 앱이 받아 둔 모델은 쓰지 않습니다.
 - **모델이 없으면 처음 번역할 때 묻고 내려받습니다(약 1GB).** 동의하기 전에는 아무 요청도 보내지 않습니다.
   Hugging Face의 공식 MLX 변환(`mlx-community/Hy-MT2-1.8B-4bit`)을 고정된 커밋에서 받고, 파일 8개를 모두 앱에 적힌
   SHA-256으로 확인한 뒤에만 위 Feather 폴더로 옮깁니다. 실패하면 받던 파일은 남기지 않습니다. 쿠키·캐시 없는 별도 연결로

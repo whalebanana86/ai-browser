@@ -171,3 +171,70 @@ struct RealDownloadTests {
         #expect(ScriptCheck.scripts(in: output).contains(.hangul))
     }
 }
+
+struct ModelLocationTests {
+    private func makeModel(at folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: folder.appendingPathComponent("config.json"))
+    }
+
+    /// Only Feather's own folder (or the user's setting) counts; another app's copy does not.
+    @Test func onlyFeathersOwnModelIsUsed() throws {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent("FeatherSupport-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: support) }
+        try makeModel(at: support.appendingPathComponent("AITranslate/Models/hy-mt2-1.8b-4bit"))
+        #expect(Settings.translationModel(support: support, override: nil) == nil, "AITranslate's copy is not used")
+        let own = support.appendingPathComponent("Feather/Models/hy-mt2-1.8b-4bit")
+        try makeModel(at: own)
+        #expect(Settings.translationModel(support: support, override: nil)?.path == own.path)
+        let custom = support.appendingPathComponent("elsewhere")
+        try makeModel(at: custom)
+        #expect(Settings.translationModel(support: support, override: custom.path)?.path == custom.path)
+    }
+}
+
+/// First use on a Mac without the model, through the window's own path: ask, agree, download
+/// into Feather's real models folder, translate. Leaves the model in place. Only when asked:
+/// `FEATHER_REAL_FIRST_USE=1 swift test --filter RealFirstUseTests` (after `./build.sh translator`).
+@MainActor
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["FEATHER_REAL_FIRST_USE"] == "1"))
+struct RealFirstUseTests {
+    @Test func firstTranslationAsksDownloadsAndTranslates() async throws {
+        try #require(Settings.translationModel == nil, "this Mac already has the model")
+        _ = NSApplication.shared
+        let browser = BrowserWindowController()
+        browser.persistsSession = false
+        var asked = 0
+        browser.askToDownloadModel = { reply in
+            asked += 1
+            reply(true)
+        }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let helper = TranslatorProcess(executable: root.appendingPathComponent("build/Feather.app/Contents/Helpers/FeatherTranslator")) { Settings.translationModel }
+        defer { helper.stop() }
+        browser.translationModelAvailable = { helper.hasModel }
+        browser.translator = browser.makeTranslator { p, t, l in try await helper.translate(prompt: p, maxTokens: t, timeLimit: l) }
+        let html = "<p id='p'>The first translation downloads the model and then translates this sentence.</p>"
+        let address = try #require(URL(string: "data:text/html;charset=utf-8," + (html.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")))
+        let tab = browser.openTab(address)
+        await withCheckedContinuation { continuation in tab.onLoadFinished = { _ in continuation.resume() } }
+        let webView = try #require(tab.webView)
+
+        let started = Date()
+        browser.toggleTranslationAction(nil)
+        var text = ""
+        for _ in 0..<600 {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            text = (try? await webView.evaluateJavaScript("document.getElementById('p').textContent") as? String) ?? ""
+            if ScriptCheck.scripts(in: text).contains(.hangul) { break }
+        }
+        let model = try #require(Settings.translationModel)
+        print("REAL FIRST USE: asked \(asked)x, model at \(model.path), \(Int(Date().timeIntervalSince(started))) s to translated text: \(text)")
+        #expect(asked == 1)
+        #expect(model.path.hasSuffix("Feather/Models/hy-mt2-1.8b-4bit"))
+        #expect(ScriptCheck.scripts(in: text).contains(.hangul))
+        for file in ModelDownloader.files {
+            #expect(try ModelDownloader.sha256(of: model.appendingPathComponent(file.name)) == file.sha256, "\(file.name)")
+        }
+    }
+}
