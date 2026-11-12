@@ -307,27 +307,34 @@ enum PageText {
         var text: String
     }
 
-    /// Blocks, the ones on screen first. Skips code, inputs, editable areas and anything already
-    /// translated; picks the innermost block so nothing is translated twice.
-    static let collectScript = #"""
+    /// Up to `limit` blocks the user can see now (plus half a screen below), top of the screen
+    /// first. Only these are claimed; the rest wait until scrolling brings them near. Skips what
+    /// isn't actually visible (closed dialogs, hidden menus), code, inputs and editable areas, and
+    /// picks the innermost block so nothing is translated twice.
+    static let nextScript = #"""
         const selector = 'p, li, h1, h2, h3, h4, h5, h6, td, th, dd, dt, blockquote, figcaption, caption, summary, label';
-        const skip = 'pre, code, kbd, samp, script, style, noscript, textarea, input, select, button, svg, math, [contenteditable=""], [contenteditable="true"]';
+        const skip = 'pre, code, kbd, samp, script, style, noscript, textarea, input, select, button, svg, math, [contenteditable=""], [contenteditable="true"], [hidden], dialog:not([open])';
         window.__featherTranslate ??= { next: 1, originals: new Map() };
         const state = window.__featherTranslate;
-        const blocks = [];
+        // Whether it's on screen, not aria-hidden: CNN marks its visible paragraphs aria-hidden.
+        const visible = el => el.checkVisibility ? el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+            : getComputedStyle(el).visibility !== 'hidden';
+        const near = [];
         for (const el of document.body ? document.body.querySelectorAll(selector) : []) {
-            if (el.closest(skip) || el.dataset.featherTid) continue;
-            if (el.querySelector(selector)) continue;
+            if (el.dataset.featherTid) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0 || rect.bottom < 0 || rect.top > innerHeight * 1.5) continue;
+            if (el.closest(skip) || el.querySelector(selector) || !visible(el)) continue;
             const text = el.innerText.replace(/\s+/g, ' ').trim();
             if (text.length < 2 || !/\p{L}/u.test(text)) continue;
+            near.push({ el, text, top: rect.top });
+        }
+        near.sort((a, b) => Math.max(a.top, 0) - Math.max(b.top, 0));
+        return near.slice(0, limit).map(({ el, text }) => {
             const id = state.next++;
             el.dataset.featherTid = String(id);
-            const rect = el.getBoundingClientRect();
-            const onScreen = rect.bottom > 0 && rect.top < innerHeight && rect.width > 0;
-            blocks.push({ id, text, onScreen, top: rect.top });
-        }
-        blocks.sort((a, b) => (b.onScreen - a.onScreen) || (a.top - b.top));
-        return blocks.map(b => ({ id: b.id, text: b.text }));
+            return { id, text };
+        });
         """#
 
     static let applyScript = #"""
@@ -352,8 +359,10 @@ enum PageText {
         return restored;
         """#
 
-    static func collect(in webView: WKWebView) async throws -> [Block] {
-        let result = try await webView.callAsyncJavaScript(collectScript, arguments: [:], in: nil, contentWorld: world)
+    /// The next blocks to translate where the user is looking; empty when everything near the
+    /// current scroll position is done.
+    static func next(_ limit: Int, in webView: WKWebView) async throws -> [Block] {
+        let result = try await webView.callAsyncJavaScript(nextScript, arguments: ["limit": limit], in: nil, contentWorld: world)
         return (result as? [[String: Any]] ?? []).compactMap { item in
             guard let id = item["id"] as? Int, let text = item["text"] as? String else { return nil }
             return Block(id: id, text: text)
@@ -372,9 +381,9 @@ enum PageText {
     }
 }
 
-/// Translates the page in a web view block by block, on-screen blocks first. Once turned on
-/// for a tab it stays on until turned off: text the page adds later (infinite scroll, live
-/// updates) and the pages the tab goes to next are translated too.
+/// Translates what the user is looking at, following the scroll position: the visible blocks
+/// first, then whatever scrolling or the page brings into view. Once turned on for a tab it
+/// stays on until turned off, across the pages the tab goes to next.
 @MainActor
 final class PageTranslator {
     typealias Translate = (_ prompt: String, _ maxTokens: Int, _ timeLimit: TimeInterval) async throws -> String
@@ -389,9 +398,10 @@ final class PageTranslator {
     private let target: (code: String, name: String)
     /// Tabs with translation on, and the loop that keeps translating new text in each.
     private var watching: [ObjectIdentifier: Task<Void, Never>] = [:]
-    /// How often a translated tab is checked for new text.
-    var pollInterval: TimeInterval = 1.5
-    var onProgress: ((WKWebView, Int, Int) -> Void)?
+    /// How often a translated tab is checked for newly visible text.
+    var pollInterval: TimeInterval = 0.5
+    /// Blocks translated so far on the current page.
+    var onProgress: ((WKWebView, Int) -> Void)?
     /// Translation turned itself off (the model failed while following page changes).
     var onStopped: ((WKWebView, String) -> Void)?
 
@@ -450,25 +460,32 @@ final class PageTranslator {
         }
     }
 
-    /// Translates the blocks not seen before. Blocks already in the target language are left
-    /// as they are; a block whose page changed under it is dropped.
+    /// Translates the visible blocks not seen before, a few at a time so a scroll in between
+    /// redirects the next ones. Blocks already in the target language are left as they are.
     private func translateNewText(in webView: WKWebView, isFirstPass: Bool) async throws -> Outcome {
         let key = ObjectIdentifier(webView)
         let page = webView.url
-        let blocks = try await PageText.collect(in: webView)
-        guard !blocks.isEmpty else { return .nothingToTranslate }
-        let sample = blocks.prefix(30).map(\.text).joined(separator: " ")
-        if TranslationLanguage.detect(sample) == target.code { return .alreadyInTargetLanguage }
         var done = 0
-        for block in blocks {
-            guard watching[key] != nil, webView.url == page else { return .translated(blocks: done) }
-            let text = try await translateChecked(block.text)
-            guard watching[key] != nil, webView.url == page else { return .translated(blocks: done) }
-            if !text.isEmpty { try await PageText.apply(text, to: block.id, in: webView) }
-            done += 1
-            if isFirstPass { onProgress?(webView, done, blocks.count) }
+        var skipped = 0
+        while watching[key] != nil, webView.url == page {
+            let blocks = try await PageText.next(3, in: webView)
+            if blocks.isEmpty { break }
+            let sample = blocks.map(\.text).joined(separator: " ")
+            if sample.count >= 40, TranslationLanguage.detect(sample) == target.code {
+                skipped += blocks.count
+                continue
+            }
+            for block in blocks {
+                guard watching[key] != nil, webView.url == page else { return .translated(blocks: done) }
+                let text = try await translateChecked(block.text)
+                guard watching[key] != nil, webView.url == page else { return .translated(blocks: done) }
+                if !text.isEmpty { try await PageText.apply(text, to: block.id, in: webView) }
+                done += 1
+                onProgress?(webView, done)
+            }
         }
-        return .translated(blocks: done)
+        if done > 0 { return .translated(blocks: done) }
+        return skipped > 0 ? .alreadyInTargetLanguage : .nothingToTranslate
     }
 
     /// One retry when the model slips letters from an unrelated writing system into the result.

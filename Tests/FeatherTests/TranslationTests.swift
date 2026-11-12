@@ -91,6 +91,10 @@ final class TranslationPage: NSObject, WKNavigationDelegate {
         <pre><code>let x = 1</code></pre>
         <ul><li><p>Nested paragraph inside a list item.</p></li></ul>
         <p contenteditable="true">Something the user is typing.</p>
+        <dialog><p>Feedback form text in a closed dialog.</p></dialog>
+        <div style="visibility: hidden"><p>Hidden menu text.</p></div>
+        <div style="opacity: 0"><p>Invisible overlay text.</p></div>
+
         <p>   </p><p>123</p>
         <div style="height: 2000px"></div>
         <p id="far">This paragraph starts far below the screen.</p>
@@ -100,20 +104,36 @@ final class TranslationPage: NSObject, WKNavigationDelegate {
 
 @MainActor
 struct PageTextTests {
-    @Test func collectsBlocksOnScreenFirstAndSkipsWhatShouldNotBeTranslated() async throws {
+    @Test func takesVisibleBlocksNearTheScrollPositionAndSkipsWhatShouldNotBeTranslated() async throws {
         let page = TranslationPage()
         await page.load(TranslationPage.article)
-        let texts = try await PageText.collect(in: page.webView).map(\.text)
+        let texts = try await PageText.next(10, in: page.webView).map(\.text)
         #expect(texts == ["Web browsers", "A web browser is an application for accessing websites.",
-                          "Nested paragraph inside a list item.", "This paragraph starts far below the screen."])
-        #expect(try await PageText.collect(in: page.webView).isEmpty, "blocks are collected once")
+                          "Nested paragraph inside a list item."], "only what's near the screen, nothing hidden")
+        #expect(try await PageText.next(10, in: page.webView).isEmpty, "blocks are taken once")
+        try await page.page("window.scrollTo(0, document.body.scrollHeight)")
+        #expect(try await PageText.next(10, in: page.webView).map(\.text) == ["This paragraph starts far below the screen."],
+                "scrolling brings the rest")
+    }
+
+    /// CNN marks its visible article paragraphs aria-hidden; they're on screen, so they count.
+    @Test func visibleTextMarkedAriaHiddenIsStillTranslated() async throws {
+        let page = TranslationPage()
+        await page.load(#"<p aria-hidden="true" class="paragraph">Stocks tumble: Nvidia shares dropped sharply.</p>"#)
+        #expect(try await PageText.next(10, in: page.webView).map(\.text) == ["Stocks tumble: Nvidia shares dropped sharply."])
+    }
+
+    @Test func takesAFewAtATimeTopFirst() async throws {
+        let page = TranslationPage()
+        await page.load(TranslationPage.article)
+        #expect(try await PageText.next(2, in: page.webView).map(\.text) == ["Web browsers", "A web browser is an application for accessing websites."])
     }
 
     @Test func replacesTextAndRestoresTheVerySameNodes() async throws {
         let page = TranslationPage()
         await page.load(TranslationPage.article)
         try await page.page("window.saved = document.getElementById('link');")
-        let first = try #require(try await PageText.collect(in: page.webView).first { $0.text.hasPrefix("A web browser") })
+        let first = try #require(try await PageText.next(10, in: page.webView).first { $0.text.hasPrefix("A web browser") })
         #expect(try await PageText.apply("웹 브라우저는 웹사이트에 접속하는 앱입니다.", to: first.id, in: page.webView))
         #expect(try await page.page("return document.getElementById('first').textContent") as? String == "웹 브라우저는 웹사이트에 접속하는 앱입니다.")
 
@@ -127,7 +147,7 @@ struct PageTextTests {
     @Test func pageScriptsCannotSeeTheTranslationState() async throws {
         let page = TranslationPage()
         await page.load(TranslationPage.article)
-        _ = try await PageText.collect(in: page.webView)
+        _ = try await PageText.next(10, in: page.webView)
         #expect(try await page.page("return typeof window.__featherTranslate") as? String == "undefined")
     }
 }
@@ -153,7 +173,8 @@ struct PageTranslatorTests {
         await page.load(TranslationPage.article)
         let model = FakeModel()
         let translator = PageTranslator(target: korean, translate: model.translate)
-        #expect(await translator.toggle(page.webView) == .translated(blocks: 4))
+        translator.pollInterval = 0.2
+        #expect(await translator.toggle(page.webView) == .translated(blocks: 3), "the screen first")
         #expect(translator.isTranslated(page.webView))
         #expect(try await page.page("return document.getElementById('first').textContent") as? String
             == "번역: A web browser is an application for accessing websites.")
@@ -199,7 +220,10 @@ struct PageTranslatorTests {
         let model = FakeModel()
         let translator = PageTranslator(target: korean, translate: model.translate)
         translator.pollInterval = 0.2
-        #expect(await translator.toggle(page.webView) == .translated(blocks: 4))
+        #expect(await translator.toggle(page.webView) == .translated(blocks: 3))
+        #expect(try await text(page, "far") == "This paragraph starts far below the screen.", "not translated before it's near")
+        try await page.page("window.scrollTo(0, document.body.scrollHeight)")
+        #expect(try await eventually { try await text(page, "far")?.hasPrefix("번역: ") == true }, "follows the scroll position")
 
         try await page.page(#"document.body.insertAdjacentHTML('beforeend', '<p id="added">A paragraph the page added later by scrolling.</p>')"#)
         #expect(try await eventually { try await text(page, "added")?.hasPrefix("번역: ") == true }, "text added later")
@@ -220,14 +244,14 @@ struct PageTranslatorTests {
         var calls = 0
         let translator = PageTranslator(target: korean) { _, _, _ in
             calls += 1
-            if calls > 4 { throw TranslatorProcess.Failure.crashed }
+            if calls > 3 { throw TranslatorProcess.Failure.crashed }
             return "번역"
         }
         translator.pollInterval = 0.2
         var stopped: String?
         translator.onStopped = { _, reason in stopped = reason }
-        #expect(await translator.toggle(page.webView) == .translated(blocks: 4))
-        try await page.page(#"document.body.insertAdjacentHTML('beforeend', '<p>One more paragraph that will fail.</p>')"#)
+        #expect(await translator.toggle(page.webView) == .translated(blocks: 3))
+        try await page.page(#"document.body.insertAdjacentHTML('afterbegin', '<p>One more paragraph that will fail.</p>')"#)
         #expect(await eventually { stopped != nil })
         #expect(stopped == "번역 도우미가 멈췄습니다" && !translator.isTranslated(page.webView))
     }
@@ -399,7 +423,7 @@ struct RealModelTests {
             try await process.translate(prompt: prompt, maxTokens: tokens, timeLimit: limit)
         }
         let started = Date()
-        #expect(await translator.toggle(page.webView) == .translated(blocks: 4))
+        #expect(await translator.toggle(page.webView) == .translated(blocks: 3))
         let seconds = Date().timeIntervalSince(started)
         let first = try #require(try await page.page("return document.getElementById('first').textContent") as? String)
         #expect(ScriptCheck.scripts(in: first).contains(.hangul), "\(first)")
@@ -407,7 +431,7 @@ struct RealModelTests {
         let modelMemory = process.footprint
         #expect(modelMemory > 500 * 1_048_576)
         #expect(MemoryMeter.sample(including: [pid], excluding: [pid]).byPID[pid] == nil)
-        print("REAL MODEL: \(String(format: "%.1f", seconds)) s for 4 blocks incl. load, model \(modelMemory / 1_048_576) MB, first: \(first)")
+        print("REAL MODEL: \(String(format: "%.1f", seconds)) s for 3 blocks incl. load, model \(modelMemory / 1_048_576) MB, first: \(first)")
         _ = await translator.toggle(page.webView)
     }
 }
