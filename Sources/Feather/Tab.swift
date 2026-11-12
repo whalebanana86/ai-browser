@@ -38,6 +38,12 @@ final class Tab: NSObject {
     private var errorURL: URL?
     private var errorNavigation: WKNavigation?
 
+    /// A secret tab's own in-memory cookie and cache store, shared only with the tabs and
+    /// windows it opens. Kept while the tab is suspended, so its logins survive; dropped with
+    /// the tab, which discards everything the site stored. Nil for ordinary tabs.
+    let privateStore: WKWebsiteDataStore?
+    var isPrivate: Bool { privateStore != nil }
+
     var isLive: Bool { webView != nil }
     var isBlank: Bool { webView == nil && url == nil }
     var isLoading: Bool { webView?.isLoading ?? false }
@@ -48,19 +54,23 @@ final class Tab: NSObject {
     var displayURL: URL? { errorURL ?? url }
     var displayTitle: String {
         if !title.isEmpty { return title }
-        guard let url = displayURL else { return "새 탭" }
+        guard let url = displayURL else { return isPrivate ? "시크릿 탭" : "새 탭" }
         return url.host ?? URLTools.displayString(url)
     }
 
-    init(url: URL? = nil, title: String = "", upgraded: Bool = false) {
+    init(url: URL? = nil, title: String = "", upgraded: Bool = false, privateStore: WKWebsiteDataStore? = nil) {
         self.url = url
         self.title = title
         self.autoUpgradedURL = upgraded ? url : nil
+        self.privateStore = privateStore
         super.init()
     }
 
-    /// Adopts a web view WebKit asked for (window.open, target=_blank).
+    /// Adopts a web view WebKit asked for (window.open, target=_blank). One opened from a
+    /// secret tab comes with that tab's store and stays secret.
     init(webView: WKWebView) {
+        let store = webView.configuration.websiteDataStore
+        privateStore = store.isPersistent ? nil : store
         super.init()
         attach(webView)
     }
@@ -71,7 +81,7 @@ final class Tab: NSObject {
     @discardableResult
     func wake() -> WKWebView {
         if let webView { return webView }
-        let webView = WebKitEnvironment.shared.makeWebView()
+        let webView = WebKitEnvironment.shared.makeWebView(dataStore: privateStore)
         attach(webView)
         if let savedState {
             webView.interactionState = savedState

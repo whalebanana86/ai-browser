@@ -71,6 +71,7 @@ private final class TabItemView: NSView {
     private let label = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
     private var isSuspended = false
+    private var isPrivate = false
     private var isHovered = false {
         didSet { refresh() }
     }
@@ -97,6 +98,7 @@ private final class TabItemView: NSView {
         label.stringValue = tab.displayTitle
         toolTip = tab.isLive || tab.isBlank ? tab.displayTitle : "\(tab.displayTitle)\n(일시 중단됨 · 선택하면 다시 불러옵니다)"
         isSuspended = !tab.isLive && !tab.isBlank
+        isPrivate = tab.isPrivate
         refresh()
     }
 
@@ -117,8 +119,13 @@ private final class TabItemView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard isActive || isHovered else { return }
-        NSColor.labelColor.withAlphaComponent(isActive ? 0.1 : 0.05).setFill()
+        // Secret tabs are always tinted, so they're told apart at a glance.
+        if isPrivate {
+            NSColor.systemPurple.withAlphaComponent(isActive ? 0.28 : 0.14).setFill()
+        } else {
+            guard isActive || isHovered else { return }
+            NSColor.labelColor.withAlphaComponent(isActive ? 0.1 : 0.05).setFill()
+        }
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
     }
 
@@ -207,12 +214,21 @@ final class ProgressBar: NSView {
 
 /// Shown for a new, empty tab. No web view exists until the user goes somewhere.
 final class PlaceholderView: NSView {
+    /// A blank secret tab says what it is.
+    var isPrivate = false {
+        didSet {
+            title.stringValue = isPrivate ? "시크릿 탭" : "Feather"
+            hint.stringValue = isPrivate ? "이 탭을 닫으면 쿠키·캐시·사이트 데이터가 모두 지워집니다  ·  ⌘L" : Self.normalHint
+        }
+    }
+    private static let normalHint = "검색어나 주소를 입력하세요  ·  ⌘L"
+    private let title = NSTextField(labelWithString: "Feather")
+    private let hint = NSTextField(labelWithString: PlaceholderView.normalHint)
+
     override init(frame: NSRect) {
         super.init(frame: frame)
-        let title = NSTextField(labelWithString: "Feather")
         title.font = .systemFont(ofSize: 34, weight: .light)
         title.textColor = .tertiaryLabelColor
-        let hint = NSTextField(labelWithString: "검색어나 주소를 입력하세요  ·  ⌘L")
         hint.font = .systemFont(ofSize: 13)
         hint.textColor = .tertiaryLabelColor
         let stack = NSStackView(views: [title, hint])

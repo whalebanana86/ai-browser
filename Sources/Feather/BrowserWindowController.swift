@@ -75,7 +75,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     private func connectPasswords() {
-        passwords.onOffer = { [weak self] offer, _ in self?.askToSave(offer) }
+        passwords.onOffer = { [weak self] offer, webView in
+            guard Self.offersPasswordSaving(in: webView) else { return }
+            self?.askToSave(offer)
+        }
+    }
+
+    /// Secret tabs never ask to save an account: nothing from them should outlive the tab.
+    static func offersPasswordSaving(in webView: WKWebView?) -> Bool {
+        webView?.configuration.websiteDataStore.isPersistent ?? true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -83,8 +91,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: - Tabs
 
     @discardableResult
-    func openTab(_ url: URL?, upgraded: Bool = false, activate: Bool = true, after opener: Tab? = nil) -> Tab {
-        let tab = Tab(url: url, upgraded: upgraded)
+    func openTab(_ url: URL?, upgraded: Bool = false, activate: Bool = true, after opener: Tab? = nil,
+                 privateStore: WKWebsiteDataStore? = nil) -> Tab {
+        let tab = Tab(url: url, upgraded: upgraded, privateStore: privateStore)
         insert(tab, after: opener, activate: activate)
         if !activate, url != nil { tab.wake() }
         return tab
@@ -125,6 +134,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     private func showActiveTab() {
         guard let tab = activeTab else { return }
         if tab.isBlank {
+            placeholder.isPrivate = tab.isPrivate
             placeholder.isHidden = false
             window?.makeFirstResponder(addressField)
             return
@@ -143,7 +153,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         let tab = tabs.remove(at: index)
         tab.delegate = nil
         tab.suspend()
-        if !tab.isBlank {
+        // A closed secret tab is gone for good: nothing to reopen, its store goes with it.
+        if !tab.isBlank, !tab.isPrivate {
             closedTabs.append(tab)
             if closedTabs.count > 20 { closedTabs.removeFirst() }
         }
@@ -204,7 +215,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func tab(_ tab: Tab, openInBackground url: URL) {
-        openTab(url, activate: false, after: tab)
+        openTab(url, activate: false, after: tab, privateStore: tab.privateStore)
     }
 
     func tabDidRequestClose(_ tab: Tab) {
@@ -402,6 +413,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: - Actions
 
     @objc func newTabAction(_ sender: Any?) { openTab(nil) }
+    @objc func newPrivateTabAction(_ sender: Any?) { openTab(nil, privateStore: .nonPersistent()) }
     @objc func closeTabAction(_ sender: Any?) { closeTab(at: activeIndex) }
     @objc func focusAddressBar(_ sender: Any?) { window?.makeFirstResponder(addressField) }
     @objc func reloadAction(_ sender: Any?) { activeTab?.reload() }
@@ -644,18 +656,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     func saveSession() {
         guard persistsSession else { return }
-        var entries: [Session.Entry] = []
-        var active = 0
-        for (index, tab) in tabs.enumerated() {
-            guard let url = tab.displayURL else { continue }
-            if index == activeIndex { active = entries.count }
-            entries.append(.init(url: url, title: tab.title))
-        }
-        guard let data = try? JSONEncoder().encode(Session(tabs: entries, active: active)) else { return }
+        guard let data = try? JSONEncoder().encode(sessionToSave()) else { return }
         let file = Self.sessionFile
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
     }
+
+    /// The tabs to bring back after a restart. Secret tabs are never written down.
+    private func sessionToSave() -> Session {
+        var entries: [Session.Entry] = []
+        var active = 0
+        for (index, tab) in tabs.enumerated() where !tab.isPrivate {
+            guard let url = tab.displayURL else { continue }
+            if index == activeIndex { active = entries.count }
+            entries.append(.init(url: url, title: tab.title))
+        }
+        return Session(tabs: entries, active: active)
+    }
+
+    /// Addresses `saveSession` would write, for tests.
+    var savedSessionURLs: [URL] { sessionToSave().tabs.map(\.url) }
 
     private func scheduleSave() {
         guard persistsSession, !saveScheduled else { return }

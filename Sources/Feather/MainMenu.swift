@@ -21,6 +21,7 @@ enum MainMenu {
         ]))
         main.addItem(submenu("파일", [
             item("새 탭", #selector(Browser.newTabAction(_:)), "t"),
+            item("새 시크릿 탭", #selector(Browser.newPrivateTabAction(_:)), "n", [.command, .shift]),
             item("닫은 탭 다시 열기", #selector(Browser.reopenClosedTab(_:)), "t", [.command, .shift]),
             item("주소창으로 이동", #selector(Browser.focusAddressBar(_:)), "l"),
             .separator(),

@@ -31,8 +31,9 @@ final class WebKitEnvironment {
         }
     }
 
-    func makeWebView(configuration: WKWebViewConfiguration? = nil) -> WKWebView {
-        let webView = BrowserWebView(frame: .zero, configuration: configuration ?? makeConfiguration())
+    /// `dataStore` is a secret tab's own store; ordinary tabs share `dataStore`.
+    func makeWebView(configuration: WKWebViewConfiguration? = nil, dataStore: WKWebsiteDataStore? = nil) -> WKWebView {
+        let webView = BrowserWebView(frame: .zero, configuration: configuration ?? makeConfiguration(dataStore: dataStore ?? self.dataStore))
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
         webView.autoresizingMask = [.width, .height]
@@ -40,7 +41,7 @@ final class WebKitEnvironment {
         return webView
     }
 
-    private func makeConfiguration() -> WKWebViewConfiguration {
+    private func makeConfiguration(dataStore: WKWebsiteDataStore) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore
         config.userContentController = contentController
