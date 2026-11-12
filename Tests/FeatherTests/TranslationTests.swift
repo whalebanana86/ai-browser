@@ -144,6 +144,40 @@ struct PageTextTests {
         #expect(try await page.page("return document.querySelectorAll('[data-feather-tid]').length") as? Int == 0)
     }
 
+    /// Card lists put an image and a headline in one block; translating must keep the image.
+    @Test func imagesInABlockSurviveTranslation() async throws {
+        let page = TranslationPage()
+        await page.load(#"<ul><li id="card"><img id="pic" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="40"><span>Headline of a related story</span></li></ul>"#)
+        let block = try #require(try await PageText.next(10, in: page.webView).first)
+        #expect(try await PageText.apply("관련 기사 제목", to: block.id, in: page.webView))
+        #expect(try await page.page("return document.getElementById('pic')?.parentElement?.id") as? String == "card", "image still there")
+        #expect(try await page.page("return document.getElementById('card').textContent") as? String == "관련 기사 제목")
+        try await PageText.restore(in: page.webView)
+        #expect(try await page.page("return document.getElementById('card').textContent") as? String == "Headline of a related story")
+    }
+
+    /// The translation lands in the text run that was there, so it keeps that run's colour.
+    @Test func textKeepsItsColourAndStyle() async throws {
+        let page = TranslationPage()
+        await page.load(#"<p id="p" style="color: rgb(10, 20, 30)"><span id="red" style="color: rgb(200, 0, 0); font-weight: 700">A sentence in red bold type here.</span></p>"#)
+        let block = try #require(try await PageText.next(10, in: page.webView).first)
+        let before = try await page.page("return getComputedStyle(document.getElementById('red')).color") as? String
+        #expect(try await PageText.apply("빨간 굵은 글씨 문장입니다.", to: block.id, in: page.webView))
+        #expect(try await page.page("return document.getElementById('red')?.textContent") as? String == "빨간 굵은 글씨 문장입니다.", "same styled span holds it")
+        #expect(try await page.page("return getComputedStyle(document.getElementById('red')).color") as? String == before)
+        #expect(try await page.page("return document.getElementById('p').children.length") as? Int == 1)
+    }
+
+    /// A paragraph that starts with a link must not turn link-coloured as a whole.
+    @Test func translationGoesIntoTheParagraphsOwnTextNotALink() async throws {
+        let page = TranslationPage()
+        await page.load(#"<p id="p"><a id="l" href="/x" style="color: rgb(0, 0, 255)">Link first</a> then a long plain sentence that follows it.</p>"#)
+        let block = try #require(try await PageText.next(10, in: page.webView).first)
+        #expect(try await PageText.apply("번역된 문단 전체", to: block.id, in: page.webView))
+        #expect(try await page.page("return document.getElementById('l').textContent") as? String == "", "not inside the link")
+        #expect(try await page.page("return document.getElementById('p').lastChild.textContent") as? String == "번역된 문단 전체")
+    }
+
     @Test func pageScriptsCannotSeeTheTranslationState() async throws {
         let page = TranslationPage()
         await page.load(TranslationPage.article)

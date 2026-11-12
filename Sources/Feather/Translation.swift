@@ -297,8 +297,8 @@ final class TranslatorProcess {
 }
 
 /// Collects a page's text blocks and swaps their text for translations, in its own content
-/// world so page scripts can neither see nor tamper with it. Restoring puts back the very same
-/// nodes, so links and their event handlers survive.
+/// world so page scripts can neither see nor tamper with it. Only text changes: every element
+/// (images, links, styled spans) stays where it was, so nothing disappears or changes colour.
 enum PageText {
     static let world = WKContentWorld.world(name: "FeatherTranslate")
 
@@ -337,12 +337,25 @@ enum PageText {
         });
         """#
 
+    /// Puts the translation in place of the block's text without touching a single element:
+    /// images, links and styled spans stay, and the text keeps the colour and style of the run
+    /// it lands in (the longest text directly in the block, else the longest anywhere). The
+    /// other text nodes are emptied. The original text of each node is kept for restoring.
     static let applyScript = #"""
         const state = window.__featherTranslate;
         const el = document.querySelector(`[data-feather-tid="${id}"]`);
         if (!state || !el) return false;
-        if (!state.originals.has(id)) state.originals.set(id, [...el.childNodes]);
-        el.replaceChildren(document.createTextNode(text));
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.data.trim() && !node.parentElement.closest('script, style, noscript')) nodes.push(node);
+        }
+        if (!nodes.length) return false;
+        if (!state.originals.has(id)) state.originals.set(id, nodes.map(node => [node, node.data]));
+        const direct = nodes.filter(node => node.parentNode === el);
+        const target = (direct.length ? direct : nodes).reduce((a, b) => (b.data.length > a.data.length ? b : a));
+        for (const node of nodes) node.data = node === target ? text : '';
         return true;
         """#
 
@@ -350,9 +363,9 @@ enum PageText {
         const state = window.__featherTranslate;
         if (!state) return 0;
         let restored = 0;
-        for (const [id, nodes] of state.originals) {
-            const el = document.querySelector(`[data-feather-tid="${id}"]`);
-            if (el) { el.replaceChildren(...nodes); restored++; }
+        for (const [, texts] of state.originals) {
+            for (const [node, data] of texts) node.data = data;
+            restored++;
         }
         for (const el of document.querySelectorAll('[data-feather-tid]')) delete el.dataset.featherTid;
         window.__featherTranslate = undefined;

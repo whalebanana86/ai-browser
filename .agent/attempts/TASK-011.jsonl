@@ -1,0 +1,3 @@
+{"ts": "2026-11-12T15:22:43+0900", "epoch": 1794464563, "task": "TASK-011", "attempt": 1, "result": "pass", "duration_sec": 18}
+{"ts": "2026-11-12T15:23:10+0900", "epoch": 1794464590, "task": "TASK-011", "attempt": 2, "result": "fail", "step": "lint", "exit_code": 1, "duration_sec": 7, "signature": "lint:38375141c105", "errors": ["Tests/FeatherTests/TranslationTests.swift: error: unexpected code 'x\" style=\"color: rgb(0, 0, 255)\">Link first</a> then a long plain sentence that follows it.</p>\"#' in function call"]}
+{"ts": "2026-11-12T15:23:59+0900", "epoch": 1794464639, "task": "TASK-011", "attempt": 3, "result": "pass", "duration_sec": 18}
