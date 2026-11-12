@@ -514,6 +514,16 @@ struct BrowserTranslationTests {
         #expect(menu.items.contains { $0.action == #selector(BrowserWindowController.toggleTranslationAction(_:)) }, "page menu")
     }
 
+    /// Translation progress must not hide the memory figure.
+    @Test func messagesKeepMemoryVisible() {
+        _ = NSApplication.shared
+        let browser = BrowserWindowController()
+        browser.persistsSession = false
+        browser.governor.onSample?(MemoryMeter.Sample(total: 812 * 1_048_576, processCount: 3, byPID: [:]))
+        browser.flash("번역 중 · 5문단")
+        #expect(browser.statusText == "번역 중 · 5문단 · 812 MB")
+    }
+
     @Test func menuTitleFollowsTheTabsState() async throws {
         _ = NSApplication.shared
         let browser = BrowserWindowController()

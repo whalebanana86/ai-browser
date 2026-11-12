@@ -283,7 +283,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             statusLabel.alignment = .right
             statusLabel.lineBreakMode = .byTruncatingHead
-            statusLabel.widthAnchor.constraint(equalToConstant: 140).isActive = true
+            statusLabel.widthAnchor.constraint(equalToConstant: 240).isActive = true
         default:
             return nil
         }
@@ -394,12 +394,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             let model = TranslatorProcess.shared.footprint
             if model > 0 { details.append("번역 모델 \(Self.format(model)) (탭 메모리와 별도, 2분 동안 안 쓰면 해제)") }
         }
-        statusLabel.stringValue = flashText ?? parts.joined(separator: " · ")
+        // A message (translation progress, downloads) goes in front; memory always stays at the
+        // end, and if it doesn't fit the message is what gets cut (truncating head).
+        let memoryText = memory.map { Self.format($0.total) }
+        statusLabel.stringValue = flashText.map { [$0, memoryText].compactMap { $0 }.joined(separator: " · ") } ?? parts.joined(separator: " · ")
         statusLabel.toolTip = details.joined(separator: "\n")
         statusLabel.textColor = (memory?.total ?? 0) > Settings.memoryBudget ? .systemOrange : .secondaryLabelColor
     }
 
-    private func flash(_ text: String) {
+    /// What the status area shows now, for tests.
+    var statusText: String { statusLabel.stringValue }
+
+    func flash(_ text: String) {
         flashText = text
         flashGeneration += 1
         let generation = flashGeneration
