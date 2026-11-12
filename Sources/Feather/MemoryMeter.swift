@@ -12,11 +12,14 @@ enum MemoryMeter {
         var byPID: [pid_t: UInt64]
     }
 
-    static func sample(including known: [pid_t] = []) -> Sample {
+    /// `excluded` processes are left out even though macOS charges them to the app: the
+    /// translation model helper is accounted for separately from the tabs.
+    static func sample(including known: [pid_t] = [], excluding excluded: [pid_t] = []) -> Sample {
         let me = getpid()
         var pids = Set(known)
         pids.insert(me)
         pids.formUnion(processesAttributed(to: me))
+        pids.subtract(excluded)
         var byPID: [pid_t: UInt64] = [:]
         for pid in pids {
             let bytes = footprint(of: pid)

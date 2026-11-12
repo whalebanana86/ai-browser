@@ -2,3 +2,5 @@
 build/
 .swiftpm/
 .DS_Store
+Translator/.build-xcode/
+Translator/.build/

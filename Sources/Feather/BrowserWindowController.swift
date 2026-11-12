@@ -8,6 +8,7 @@ private extension NSToolbarItem.Identifier {
     static let address = Self("address")
     static let bookmark = Self("bookmark")
     static let password = Self("password")
+    static let translate = Self("translate")
     static let status = Self("status")
 }
 
@@ -25,6 +26,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     var persistsSession = true
     /// Tests swap in a store backed by a temporary file.
     var bookmarks = BookmarkStore.shared
+    /// Tests swap in one backed by a fake model.
+    lazy var translator = makeTranslator { prompt, tokens, limit in
+        try await TranslatorProcess.shared.translate(prompt: prompt, maxTokens: tokens, timeLimit: limit)
+    }
+
+    func makeTranslator(_ translate: @escaping PageTranslator.Translate) -> PageTranslator {
+        let translator = PageTranslator(translate: translate)
+        translator.onProgress = { [weak self] webView, done, total in
+            guard self?.activeTab?.webView === webView else { return }
+            self?.flash("번역 중 \(done)/\(total)")
+        }
+        translator.onStopped = { [weak self] _, reason in
+            self?.flash("번역을 껐습니다 · \(reason)")
+            self?.updateToolbar()
+        }
+        return translator
+    }
+
     /// Tests swap in a manager with a throwaway store.
     var passwords = PasswordManager.shared {
         didSet { connectPasswords() }
@@ -233,7 +252,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.back, .forward, .reload, .address, .bookmark, .password, .status]
+        [.back, .forward, .reload, .address, .translate, .bookmark, .password, .status]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -248,6 +267,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .forward: configureButton(item, symbol: "chevron.right", label: "앞으로", action: #selector(goForwardAction(_:)))
         case .reload: configureButton(item, symbol: "arrow.clockwise", label: "새로고침", action: #selector(reloadOrStop(_:)))
         case .bookmark: configureButton(item, symbol: "star", label: "북마크", action: #selector(toggleBookmarkAction(_:)))
+        case .translate: configureButton(item, symbol: "character.bubble", label: "번역", action: #selector(toggleTranslationAction(_:)))
         case .password: configureButton(item, symbol: "key", label: "계정 채우기", action: #selector(fillPasswordAction(_:)))
         case .address:
             item.label = "주소"
@@ -337,6 +357,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             star.image = NSImage(systemSymbolName: marked ? "star.fill" : "star", accessibilityDescription: nil)
             star.toolTip = marked ? "북마크에서 제거 (⌘D)" : "이 페이지 북마크 (⌘D)"
         }
+        if let button = toolbarItems[.translate] {
+            let on = tab?.webView.map(translator.isTranslated) ?? false
+            button.isEnabled = tab?.webView != nil
+            button.image = NSImage(systemSymbolName: on ? "character.bubble.fill" : "character.bubble", accessibilityDescription: nil)
+            button.toolTip = on ? "원문 보기 (⌥⌘T) · 이 탭은 번역이 켜져 있습니다" : "이 페이지 번역 (⌥⌘T)"
+        }
         if let key = toolbarItems[.password] {
             let saved = passwords.accounts(for: tab?.webView).count
             key.isEnabled = saved > 0
@@ -364,6 +390,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             let live = tabs.filter(\.isLive).count
             details.append("메모리 \(Self.format(memory.total)) — 앱과 WebKit 프로세스 \(memory.processCount)개 합계")
             details.append("탭 \(tabs.count)개 중 \(live)개 실행 중 · 나머지는 일시 중단되어 메모리를 쓰지 않음")
+            let model = TranslatorProcess.shared.footprint
+            if model > 0 { details.append("번역 모델 \(Self.format(model)) (탭 메모리와 별도, 2분 동안 안 쓰면 해제)") }
         }
         statusLabel.stringValue = flashText ?? parts.joined(separator: " · ")
         statusLabel.toolTip = details.joined(separator: "\n")
@@ -569,6 +597,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         flash("모든 사이트에서 다시 계정 저장을 묻습니다")
     }
 
+    /// Translates the page on the device, or shows the original again.
+    @objc func toggleTranslationAction(_ sender: Any?) {
+        guard let webView = activeTab?.webView else { return }
+        let showing = translator.isTranslated(webView)
+        if !showing { flash(TranslatorProcess.shared.isRunning ? "번역 중…" : "번역 모델 불러오는 중…") }
+        Task { @MainActor in
+            let outcome = await translator.toggle(webView)
+            updateToolbar()
+            switch outcome {
+            case .translated(let blocks): flash("번역 \(blocks)문단 · 새 글과 다음 페이지도 계속 번역 (⌥⌘T 끄기)")
+            case .alreadyInTargetLanguage: flash("이미 번역할 언어입니다 · 다른 언어 글이 나오면 번역합니다")
+            case .nothingToTranslate: flash("아직 번역할 글이 없습니다 · 글이 생기면 번역합니다")
+            case .stopped: flash(showing ? "번역을 끄고 원문으로 되돌렸습니다" : "번역을 멈췄습니다")
+            case .failed(let reason): flash(reason)
+            }
+        }
+    }
+
     @objc func reloadOrStop(_ sender: Any?) {
         guard let tab = activeTab else { return }
         if tab.isLoading { tab.webView?.stopLoading() } else { tab.reload() }
@@ -613,6 +659,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(selectTabByNumber(_:)): return item.tag == 9 || item.tag <= tabs.count
         case #selector(fillPasswordAction(_:)): return !passwords.accounts(for: activeTab?.webView).isEmpty
         case #selector(clearNeverSaveAction(_:)): return !passwords.neverSaveHosts.isEmpty
+        case #selector(toggleTranslationAction(_:)):
+            let webView = activeTab?.webView
+            item.title = webView.map(translator.isTranslated) == true ? "원문 보기" : "이 페이지 번역"
+            return webView != nil
         case #selector(toggleBookmarkAction(_:)):
             let url = activeTab?.displayURL
             item.title = url.map(bookmarks.contains) == true ? "북마크에서 제거" : "이 페이지 북마크"

@@ -66,6 +66,9 @@ final class BrowserWebView: WKWebView {
         for item in menu.items {
             if let id = item.identifier?.rawValue, let title = Self.newTabTitles[id] { item.title = title }
         }
+        // Translate from the page's own menu; the window sets the title (번역 / 원문 보기).
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "이 페이지 번역", action: #selector(BrowserWindowController.toggleTranslationAction(_:)), keyEquivalent: ""))
         super.willOpenMenu(menu, with: event)
     }
 }

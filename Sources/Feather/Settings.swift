@@ -16,6 +16,18 @@ enum Settings {
     /// Search engine; `%s` is replaced by the query.
     static var searchTemplate: String { UserDefaults.standard.string(forKey: "searchURL") ?? "https://duckduckgo.com/?q=%s" }
 
+    /// The Hy-MT2-1.8B MLX 4-bit model folder: `translationModelPath` if set, else Feather's own
+    /// models folder, else the copy AITranslate downloaded (read only). Nil if none has the model.
+    static var translationModel: URL? {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let candidates = [UserDefaults.standard.string(forKey: "translationModelPath").map { URL(fileURLWithPath: $0) },
+                          support.appendingPathComponent("Feather/Models/hy-mt2-1.8b-4bit"),
+                          support.appendingPathComponent("AITranslate/Models/hy-mt2-1.8b-4bit")]
+        return candidates.compactMap { $0 }.first {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("config.json").path)
+        }
+    }
+
     private static func enabledUnlessTurnedOff(_ key: String) -> Bool {
         UserDefaults.standard.object(forKey: key) == nil || UserDefaults.standard.bool(forKey: key)
     }

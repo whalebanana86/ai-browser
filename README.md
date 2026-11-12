@@ -112,6 +112,7 @@ macOS 13 이상, Xcode(또는 Command Line Tools) 필요. `/Applications`로 옮
 |---|---|
 | ⌘T / ⌘W / ⇧⌘T | 새 탭 / 탭 닫기 / 닫은 탭 다시 열기 |
 | ⇧⌘N | 새 시크릿 탭 |
+| ⌥⌘T | 페이지 번역 켜기/끄기 |
 | ⌘L | 주소창 |
 | ⌘R / ⇧⌘R | 새로고침 / 캐시 무시 새로고침 |
 | ⌘[ / ⌘] | 뒤로 / 앞으로 |
@@ -133,6 +134,23 @@ macOS 13 이상, Xcode(또는 Command Line Tools) 필요. `/Applications`로 옮
 - 시크릿 탭에서 연 팝업과 ⌘클릭 탭도 같은 저장소의 시크릿 탭이라 로그인 흐름이 이어집니다.
 - 다음 실행 때 복원되지 않고, 닫은 탭 다시 열기(⇧⌘T)에도 남지 않습니다. 계정 저장도 묻지 않습니다.
 - 북마크와 다운로드는 사용자가 직접 남기는 것이라 시크릿 탭에서도 저장됩니다.
+
+## 페이지 번역 (기기 안, Hy-MT2)
+
+툴바의 번역 버튼, 페이지에서 오른쪽 클릭(또는 control-클릭) › 이 페이지 번역, 또는 ⌥⌘T.
+한 번 켜면 그 탭은 끌 때까지 계속 번역합니다. 나중에 생기는 글(무한 스크롤 등)과 탭에서 이동한 다음 페이지도 번역됩니다.
+다시 누르면 꺼지고 원문으로 돌아갑니다(링크 등 원래 요소가 그대로 돌아옴).
+
+- 번역은 Mac 안에서만 합니다: Tencent Hy-MT2-1.8B(Apache-2.0)의 MLX 4비트 모델. 페이지 글이 밖으로 나가지 않습니다.
+- 모델 위치: `~/Library/Application Support/Feather/Models/hy-mt2-1.8b-4bit`, 없으면 AITranslate가 받아 둔
+  `~/Library/Application Support/AITranslate/Models/hy-mt2-1.8b-4bit`를 읽기만 합니다
+  (`defaults write local.feather.browser translationModelPath <폴더>`로 바꿀 수 있음). Feather는 모델을 내려받지 않습니다.
+- **모델 메모리는 탭 메모리와 따로 계산합니다.** 모델은 별도 도우미 프로세스(`Contents/Helpers/FeatherTranslator`)에서
+  번역할 때만 돌고 2분 동안 안 쓰면 끝납니다. 탭 메모리 예산(1GB)에 넣지 않고, 툴바 상태 설명에 따로 보입니다.
+  M5 실측: 모델 올린 직후 약 1.2GB, 번역 중 최대 약 1.6~1.75GB, 초당 약 104토큰, 첫 문단 약 1초.
+- 화면에 보이는 문단부터 번역합니다. 위키백과 문서 한 편 전체는 20~50초 걸렸습니다.
+- 코드·입력 칸·편집 영역은 번역하지 않습니다. 번역 스크립트는 페이지 스크립트와 분리된 영역에서 돕니다.
+- 도우미는 `./build.sh translator`로 빌드합니다(Xcode, Metal 툴체인 필요). 없으면 번역 메뉴가 그렇게 알려 줍니다.
 
 ## 북마크
 
@@ -204,6 +222,7 @@ swift test                     # 단위 테스트 (주소 해석, 추적기·광
 | `Views.swift` | 탭 바, 주소창, 찾기 막대 등 |
 | `Bookmarks.swift` | 북마크 저장, 북마크 메뉴 |
 | `Passwords.swift` | 계정 저장(키체인), 로그인 폼 감지·채우기, 계정 메뉴 |
+| `Translation.swift`, `Translator/` | 페이지 번역, 모델 도우미(MLX) |
 | `Benchmark.swift` | `--bench` |
 | `Tests/FeatherTests/` | 단위 테스트 |
 | `scripts/auto-fix-loop.sh`, `.swift-format` | 자동 검증, Lint 설정 |

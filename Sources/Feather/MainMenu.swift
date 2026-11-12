@@ -49,6 +49,8 @@ enum MainMenu {
             item("축소", #selector(Browser.zoomOutAction(_:)), "-"),
             item("실제 크기", #selector(Browser.actualSizeAction(_:)), "0"),
             .separator(),
+            item("이 페이지 번역", #selector(Browser.toggleTranslationAction(_:)), "t", [.command, .option]),
+            .separator(),
             item("전체 화면", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ]))
         main.addItem(submenu("방문", [

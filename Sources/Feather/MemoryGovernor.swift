@@ -101,6 +101,6 @@ final class MemoryGovernor {
     static func measure(_ tabs: [Tab]) -> MemoryMeter.Sample {
         let webViews = tabs.compactMap(\.webView)
         let pids = webViews.compactMap(\.processIdentifier) + (webViews.first?.sharedProcessIdentifiers ?? [])
-        return MemoryMeter.sample(including: pids)
+        return MemoryMeter.sample(including: pids, excluding: TranslatorProcess.shared.pid.map { [$0] } ?? [])
     }
 }

@@ -1,0 +1,3 @@
+{"ts": "2026-11-12T13:10:51+0900", "epoch": 1794456651, "task": "TASK-007", "attempt": 1, "result": "pass", "duration_sec": 12}
+{"ts": "2026-11-12T13:32:07+0900", "epoch": 1794457927, "task": "TASK-007", "attempt": 2, "result": "pass", "duration_sec": 12}
+{"ts": "2026-11-12T13:37:46+0900", "epoch": 1794458266, "task": "TASK-007", "attempt": 3, "result": "pass", "duration_sec": 13}
