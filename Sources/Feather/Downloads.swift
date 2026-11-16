@@ -43,8 +43,7 @@ struct DownloadRecord: Codable, Equatable, Identifiable {
 /// until the app quits; they're never written to the history file.
 @MainActor
 final class Downloads: NSObject, WKDownloadDelegate {
-    /// Tests swap in their own instance.
-    static var shared = Downloads(historyFile: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    static let shared = Downloads(historyFile: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Feather/downloads.json"))
 
     /// Posted when a download starts, progresses, ends, or the list changes.
@@ -115,6 +114,35 @@ final class Downloads: NSObject, WKDownloadDelegate {
         changed()
     }
 
+    /// Saves a copy of a file Feather already has (a previewed document) like a download.
+    @discardableResult
+    func saveCopy(of source: URL, from address: URL?, isPrivate: Bool = false) throws -> URL {
+        let file = Self.uniqueFile(named: source.lastPathComponent, in: folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: source, to: file)
+        Self.quarantine(file, from: address)
+        let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? 0
+        let record = DownloadRecord(fileName: file.lastPathComponent, file: file, source: address, state: .finished,
+                                    receivedBytes: size, totalBytes: size, isPrivate: isPrivate)
+        records.insert(record, at: 0)
+        if records.count > Self.maxRecords { records.removeLast(records.count - Self.maxRecords) }
+        changed()
+        onFinish?(file)
+        return file
+    }
+
+    private static func quarantine(_ file: URL, from source: URL?) {
+        var file = file
+        var quarantine: [String: Any] = [
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
+            kLSQuarantineAgentNameKey as String: "Feather",
+        ]
+        if let source { quarantine[kLSQuarantineDataURLKey as String] = source }
+        var values = URLResourceValues()
+        values.quarantineProperties = quarantine
+        try? file.setResourceValues(values)
+    }
+
     // MARK: WKDownloadDelegate
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping @MainActor (URL?) -> Void) {
@@ -140,15 +168,8 @@ final class Downloads: NSObject, WKDownloadDelegate {
 
     func downloadDidFinish(_ download: WKDownload) {
         let id = ObjectIdentifier(download)
-        guard let index = index(of: id), var file = records[index].file else { return finish(id, state: .finished) }
-        var quarantine: [String: Any] = [
-            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
-            kLSQuarantineAgentNameKey as String: "Feather",
-        ]
-        if let source = download.originalRequest?.url { quarantine[kLSQuarantineDataURLKey as String] = source }
-        var values = URLResourceValues()
-        values.quarantineProperties = quarantine
-        try? file.setResourceValues(values)
+        guard let index = index(of: id), let file = records[index].file else { return finish(id, state: .finished) }
+        Self.quarantine(file, from: download.originalRequest?.url)
         let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? nil
         records[index].receivedBytes = size ?? max(records[index].receivedBytes, download.progress.completedUnitCount)
         records[index].totalBytes = records[index].receivedBytes

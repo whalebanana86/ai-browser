@@ -33,10 +33,9 @@ struct FrameDownloadTests {
         let browser = BrowserWindowController()
         browser.persistsSession = false
         browser.governor.stop()
-        let previous = Downloads.shared
-        Downloads.shared = Downloads(historyFile: nil)  // never the user's real history
-        Downloads.shared.folder = folder
-        defer { Downloads.shared = previous }
+        let downloads = Downloads(historyFile: nil)  // never the user's real history
+        downloads.folder = folder
+        browser.downloads = downloads
 
         let tab = browser.openTab(server.url, activate: false)
         let webView = tab.wake()

@@ -3,6 +3,8 @@ import WebKit
 @MainActor
 protocol TabDelegate: AnyObject {
     func tabDidChange(_ tab: Tab)
+    /// Where the tab's downloads are listed.
+    var downloads: Downloads { get }
     func tabDidFinishLoading(_ tab: Tab)
     func tab(_ tab: Tab, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction) -> WKWebView?
     func tab(_ tab: Tab, openInBackground url: URL)
@@ -40,6 +42,10 @@ final class Tab: NSObject {
     private var autoUpgradedURL: URL?
     private var lastStrippedURL: URL?
     private var errorURL: URL?
+    /// A document shown over the page instead of being downloaded (see `DocumentViewer`).
+    private(set) var document: DocumentPreview?
+    private var wantsPreview = false
+    private var previewDownload: PreviewDownload?
     private var errorNavigation: WKNavigation?
 
     /// A secret tab's own in-memory cookie and cache store, shared only with the tabs and
@@ -52,11 +58,12 @@ final class Tab: NSObject {
     var isBlank: Bool { webView == nil && url == nil }
     var isLoading: Bool { webView?.isLoading ?? false }
     var progress: Double { webView?.estimatedProgress ?? 0 }
-    var canGoBack: Bool { webView?.canGoBack ?? false }
+    var canGoBack: Bool { document != nil || (webView?.canGoBack ?? false) }
     var canGoForward: Bool { webView?.canGoForward ?? false }
     /// The address to show: on an error page, the one that failed.
-    var displayURL: URL? { errorURL ?? url }
+    var displayURL: URL? { document?.source ?? errorURL ?? url }
     var displayTitle: String {
+        if let document { return document.name }
         if !title.isEmpty { return title }
         guard let url = displayURL else { return isPrivate ? "시크릿 탭" : "새 탭" }
         return url.host ?? URLTools.displayString(url)
@@ -96,7 +103,21 @@ final class Tab: NSObject {
         return webView
     }
 
+    /// Back from a document returns to the page it was opened from.
+    func goBack() {
+        if document != nil { return closeDocument() }
+        webView?.goBack()
+    }
+
+    func closeDocument() {
+        guard let document else { return }
+        self.document = nil
+        try? FileManager.default.removeItem(at: document.file.deletingLastPathComponent())
+        delegate?.tabDidChange(self)
+    }
+
     func suspend() {
+        closeDocument()
         guard let webView else { return }
         if errorURL == nil, webView.backForwardList.currentItem != nil {
             savedState = webView.interactionState
@@ -324,15 +345,34 @@ extension Tab: WKNavigationDelegate {
         // An attachment in a frame (Gmail downloads through a hidden one) is saved only right
         // after the user clicked or typed in the page, so ad frames can't push files.
         let wanted = isAttachment && (response.isForMainFrame || (webView as? BrowserWebView)?.userJustActed == true)
+        let name = response.response.suggestedFilename ?? response.response.url?.lastPathComponent ?? ""
+        if DocumentViewer.shouldPreview(fileName: name, isMainFrame: response.isForMainFrame, isAttachment: isAttachment,
+                                        canShow: response.canShowMIMEType) {
+            wantsPreview = true
+            return decisionHandler(.download)
+        }
         decisionHandler(!response.canShowMIMEType || wanted ? .download : .allow)
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        Downloads.shared.track(download, isPrivate: isPrivate)
+        (delegate?.downloads ?? .shared).track(download, isPrivate: isPrivate)
     }
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        Downloads.shared.track(download, isPrivate: isPrivate)
+        if wantsPreview {
+            wantsPreview = false
+            let source = navigationResponse.response.url
+            previewDownload = PreviewDownload(download) { [weak self] file in
+                guard let self else { return }
+                self.previewDownload = nil
+                guard let file else { return }
+                if let old = self.document { try? FileManager.default.removeItem(at: old.file.deletingLastPathComponent()) }
+                self.document = DocumentPreview(file: file, source: source)
+                self.delegate?.tabDidChange(self)
+            }
+            return
+        }
+        (delegate?.downloads ?? .shared).track(download, isPrivate: isPrivate)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

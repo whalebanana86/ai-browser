@@ -56,6 +56,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     private let statusLabel = NSTextField(labelWithString: "")
     private let content = NSView()
     private let placeholder = PlaceholderView()
+    let documentViewer = DocumentViewerView()
     private let progressBar = ProgressBar()
     private let findBar = FindBar(frame: NSRect(x: 0, y: 0, width: 300, height: 36))
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
@@ -89,7 +90,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             self?.reloadTabStrip()
         }
         governor.start()
-        Downloads.shared.onFinish = { [weak self] file in self?.flash("다운로드 완료 · \(file.lastPathComponent)") }
+        connectDownloads()
         NotificationCenter.default.addObserver(forName: Downloads.didChange, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, note.object as AnyObject? === self.downloads else { return }
@@ -177,10 +178,43 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         let webView = tab.wake()
         if webView.superview !== content {
             webView.frame = content.bounds
-            content.addSubview(webView, positioned: .below, relativeTo: progressBar)
+            content.addSubview(webView, positioned: .below, relativeTo: documentViewer)
         }
         placeholder.isHidden = true
         if window?.firstResponder !== addressField.currentEditor() { window?.makeFirstResponder(webView) }
+        updateDocumentViewer()
+    }
+
+    /// Shows the active tab's document over its page, or hides the viewer.
+    private func updateDocumentViewer() {
+        guard let document = activeTab?.document else {
+            documentViewer.clear()
+            documentViewer.isHidden = true
+            return
+        }
+        documentViewer.frame = content.bounds
+        documentViewer.show(document)
+        documentViewer.isHidden = false
+    }
+
+    private func connectDocumentViewer() {
+        documentViewer.autoresizingMask = [.width, .height]
+        documentViewer.isHidden = true
+        documentViewer.onClose = { [weak self] in self?.activeTab?.closeDocument() }
+        documentViewer.onSave = { [weak self] document in _ = self?.saveDocument(document) }
+        documentViewer.onOpenElsewhere = { [weak self] document in
+            if let file = self?.saveDocument(document) { NSWorkspace.shared.open(file) }
+        }
+    }
+
+    /// Copies a previewed document to Downloads (and the download list).
+    func saveDocument(_ document: DocumentPreview) -> URL? {
+        do {
+            return try downloads.saveCopy(of: document.file, from: document.source, isPrivate: activeTab?.isPrivate ?? false)
+        } catch {
+            flash("저장하지 못했습니다 · \(error.localizedDescription)")
+            return nil
+        }
     }
 
     func closeTab(at index: Int) {
@@ -234,6 +268,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         if tab === activeTab {
             updateToolbar()
             updateStatus()
+            updateDocumentViewer()
         }
         scheduleSave()
     }
@@ -324,6 +359,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         placeholder.frame = content.bounds
         placeholder.autoresizingMask = [.width, .height]
         content.addSubview(placeholder)
+        connectDocumentViewer()
+        content.addSubview(documentViewer)
         progressBar.frame = NSRect(x: 0, y: content.bounds.height - 2, width: content.bounds.width, height: 2)
         progressBar.autoresizingMask = [.width, .minYMargin]
         progressBar.isHidden = true
@@ -378,8 +415,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     var downloads: Downloads = .shared {
         didSet {
             downloadsPopover = nil
+            connectDownloads()
             updateDownloadsButton()
         }
+    }
+
+    private func connectDownloads() {
+        downloads.onFinish = { [weak self] file in self?.flash("다운로드 완료 · \(file.lastPathComponent)") }
     }
 
     private(set) var downloadsPopover: NSPopover?
@@ -532,7 +574,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func focusAddressBar(_ sender: Any?) { window?.makeFirstResponder(addressField) }
     @objc func reloadAction(_ sender: Any?) { activeTab?.reload() }
     @objc func reloadFromOriginAction(_ sender: Any?) { activeTab?.reload(fromOrigin: true) }
-    @objc func goBackAction(_ sender: Any?) { activeTab?.webView?.goBack() }
+    @objc func goBackAction(_ sender: Any?) { activeTab?.goBack() }
     @objc func goForwardAction(_ sender: Any?) { activeTab?.webView?.goForward() }
     @objc func zoomInAction(_ sender: Any?) { zoom(by: 0.1) }
     @objc func zoomOutAction(_ sender: Any?) { zoom(by: -0.1) }
