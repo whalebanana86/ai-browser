@@ -20,7 +20,7 @@ enum DocumentViewer {
         "jpg", "jpeg", "png", "gif", "heic", "webp", "tif", "tiff", "bmp",
     ]
     /// Read by Feather itself (`HWPDocument`); macOS has no previewer for them.
-    static var ownExtensions: Set<String> = []
+    static let ownExtensions: Set<String> = ["hwp", "hwpx"]
 
     /// Tests point this elsewhere.
     static var cacheFolder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -179,13 +179,11 @@ final class DocumentViewerView: NSView {
     }
 }
 
-/// Formats Feather reads itself; filled in by the HWP reader.
+/// Formats Feather reads itself (HWP, HWPX).
 @MainActor
 enum OwnDocumentReader {
-    static var makeView: ((URL) -> NSView?)?
-
     static func view(for file: URL) -> NSView? {
         guard DocumentViewer.ownExtensions.contains(file.pathExtension.lowercased()) else { return nil }
-        return makeView?(file)
+        return HWPView.make(for: file)
     }
 }

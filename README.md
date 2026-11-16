@@ -165,6 +165,18 @@ macOS 13 이상, Xcode(또는 Command Line Tools) 필요. `/Applications`로 옮
 `~/Library/Application Support/Feather/bookmarks.json`에만 저장되고 동기화·전송은 없습니다.
 파일이 깨져 있으면 `bookmarks.broken.json`으로 옮겨 두고 빈 목록으로 시작합니다.
 
+## 문서 뷰어
+
+문서 링크(PDF·Word·Excel·PowerPoint·Pages·Numbers·Keynote·HWP·HWPX·이미지·텍스트)는 다운로드되는 대신
+탭 안에서 열립니다. 위쪽 막대에서 다운로드, 다른 앱에서 열기, 닫기(⌘[로도 닫힘)를 고릅니다.
+
+- HWP·HWPX 외의 형식은 macOS 미리보기(Quick Look)로 보여 줍니다.
+- 한글 파일은 macOS가 미리 보지 못해 Feather가 직접 읽어 글자와 표만 보여 줍니다(그림·정확한 모양은 제외).
+  보여 주는 화면은 스크립트를 실행하지 않고 아무것도 저장하지 않습니다. 배포용 문서는 본문이 잠겨 있어
+  문서 안 앞부분 미리보기 글만 보이고, 암호 문서와 HWP 3 이전 형식은 열지 못한다고 알려 줍니다.
+- 문서는 `~/Library/Caches/Feather/Documents`에만 잠시 두고, 닫거나 탭이 잠들면 지웁니다. 외부로 보내지 않습니다.
+- 페이지 안 숨은 창으로 시작되는 다운로드(Gmail 첨부 버튼 등)와 zip 같은 문서가 아닌 파일은 그대로 다운로드됩니다.
+
 ## 계정(아이디·비밀번호) 저장
 
 - 로그인 폼을 제출하면 계정을 저장할지 묻습니다(저장 / 나중에 / 이 사이트는 저장 안 함). 같은 아이디의 비밀번호가
