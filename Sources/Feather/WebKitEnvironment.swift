@@ -66,6 +66,25 @@ final class BrowserWebView: WKWebView {
         "WKMenuItemIdentifierOpenFrameInNewWindow": "새 탭에서 프레임 열기",
     ]
 
+    /// When the user last clicked or pressed a key in this page. Downloads a page starts from a
+    /// hidden frame (Gmail's attachment button) are allowed only right after that.
+    private(set) var lastUserInput: Date?
+
+    /// How long after the user's input such a download may start; tests shorten it.
+    static var userActionWindow: TimeInterval = 10
+
+    var userJustActed: Bool { lastUserInput.map { Date().timeIntervalSince($0) < Self.userActionWindow } ?? false }
+
+    override func mouseDown(with event: NSEvent) {
+        lastUserInput = Date()
+        super.mouseDown(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        lastUserInput = Date()
+        super.keyDown(with: event)
+    }
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         for item in menu.items {
             if let id = item.identifier?.rawValue, let title = Self.newTabTitles[id] { item.title = title }

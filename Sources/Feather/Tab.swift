@@ -320,8 +320,11 @@ extension Tab: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
         let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
-        let isAttachment = response.isForMainFrame && disposition.lowercased().hasPrefix("attachment")
-        decisionHandler(!response.canShowMIMEType || isAttachment ? .download : .allow)
+        let isAttachment = disposition.lowercased().hasPrefix("attachment")
+        // An attachment in a frame (Gmail downloads through a hidden one) is saved only right
+        // after the user clicked or typed in the page, so ad frames can't push files.
+        let wanted = isAttachment && (response.isForMainFrame || (webView as? BrowserWebView)?.userJustActed == true)
+        decisionHandler(!response.canShowMIMEType || wanted ? .download : .allow)
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {

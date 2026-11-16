@@ -7,6 +7,8 @@ import WebKit
 final class Downloads: NSObject, WKDownloadDelegate {
     static let shared = Downloads()
     var onFinish: ((URL) -> Void)?
+    /// Where files go; tests use their own folder.
+    var folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
 
     private var destinations: [ObjectIdentifier: URL] = [:]
     private var active: [ObjectIdentifier: WKDownload] = [:]
@@ -17,7 +19,6 @@ final class Downloads: NSObject, WKDownloadDelegate {
     }
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping @MainActor (URL?) -> Void) {
-        let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         let file = Self.uniqueFile(named: suggestedFilename, in: folder)
         destinations[ObjectIdentifier(download)] = file
         completionHandler(file)
