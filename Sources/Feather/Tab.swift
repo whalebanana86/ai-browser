@@ -27,6 +27,10 @@ final class Tab: NSObject {
     private(set) var title = ""
     private(set) var timing: Timing?
     var lastActive = Date()
+    /// The tab's web process footprint at the last memory check (nil while suspended), and how
+    /// many tabs share that process (WebKit may put tabs of one site in one process).
+    var memoryFootprint: UInt64?
+    var processSharedBy = 1
     /// Called once the page finished (or failed) loading and `timing` is final.
     var onLoadFinished: ((Tab) -> Void)?
 
@@ -106,6 +110,8 @@ final class Tab: NSObject {
         webView.uiDelegate = nil
         webView.removeFromSuperview()
         self.webView = nil
+        memoryFootprint = nil
+        processSharedBy = 1
         delegate?.tabDidChange(self)
     }
 
@@ -154,8 +160,10 @@ final class Tab: NSObject {
     }
 
     /// True while the page is in the middle of something a reload would throw away: a login
-    /// (a visible password or one-time-code field) or text the user typed. Only whether a field
-    /// changed is checked, never what's in it, and in a world page scripts can't reach.
+    /// (a visible password or one-time-code field) or text the user typed. A changed field only
+    /// counts if it changed right after the user's own scrolling, mouse or keyboard input (see
+    /// `inputTrackerScript`), so fields a page fills in by itself don't keep a tab alive. Only
+    /// whether a field changed is checked, never what's in it, in a world page scripts can't reach.
     func hasWorkInProgress() async -> Bool {
         guard let webView else { return false }
         let result = try? await webView.callAsyncJavaScript(Self.workInProgressScript, arguments: [:], in: nil, contentWorld: .defaultClient)
@@ -169,8 +177,32 @@ final class Tab: NSObject {
         const describes = f => [f.name, f.id, f.placeholder, f.getAttribute('aria-label'), f.autocomplete].join(' ');
         const login = fields.some(f => f.type === 'password' || /one-time-code/.test(f.autocomplete || '')
             || (['text', 'tel', 'number', ''].includes(f.type) && codeName.test(describes(f))));
-        const typed = fields.some(f => f.type !== 'search' && f.type !== 'hidden' && f.value !== f.defaultValue);
+        const edited = window.__featherInput?.edited;
+        const typed = fields.some(f => edited?.has(f) && f.type !== 'search' && f.type !== 'hidden' && f.value !== f.defaultValue);
         return login || typed;
+        """#
+
+    /// Remembers which fields changed within a second of real user input: a key press, a mouse
+    /// button or a scroll wheel. Only events from the user count (`isTrusted`; a page can't
+    /// fake those), and it runs in `.defaultClient`, which page scripts can't see or change.
+    static let inputTrackerScript = #"""
+        (() => {
+            if (window.__featherInput) return;
+            let lastUserInput = -Infinity;
+            const edited = new WeakSet();
+            const noteUser = event => { if (event.isTrusted) lastUserInput = performance.now(); };
+            for (const type of ['keydown', 'mousedown', 'wheel']) {
+                addEventListener(type, noteUser, { capture: true, passive: true });
+            }
+            const noteChange = event => {
+                if (performance.now() - lastUserInput > 1000) return;
+                const field = event.composedPath()[0];
+                if (field instanceof Element) edited.add(field);
+            };
+            addEventListener('input', noteChange, true);
+            addEventListener('change', noteChange, true);
+            window.__featherInput = { edited };
+        })();
         """#
 
     private func open(_ url: URL, in webView: WKWebView) {

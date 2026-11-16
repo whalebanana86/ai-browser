@@ -96,7 +96,7 @@ private final class TabItemView: NSView {
 
     func show(_ tab: Tab) {
         label.stringValue = tab.displayTitle
-        toolTip = tab.isLive || tab.isBlank ? tab.displayTitle : "\(tab.displayTitle)\n(일시 중단됨 · 선택하면 다시 불러옵니다)"
+        toolTip = BrowserWindowController.toolTip(for: tab)
         isSuspended = !tab.isLive && !tab.isBlank
         isPrivate = tab.isPrivate
         refresh()

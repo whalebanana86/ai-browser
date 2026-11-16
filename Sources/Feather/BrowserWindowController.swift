@@ -83,6 +83,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         governor.host = self
         governor.onSample = { [weak self] sample in
             self?.memory = sample
+            self?.noteTabMemory(sample)
             self?.updateStatus()
             self?.reloadTabStrip()
         }
@@ -334,6 +335,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             self?.findBar.isHidden = true
             self?.focusPage()
         }
+    }
+
+    /// Gives each tab its share of the last measurement, shown when hovering over the tab.
+    func noteTabMemory(_ sample: MemoryMeter.Sample) {
+        let pids = tabs.map { $0.webView?.processIdentifier }
+        for (tab, pid) in zip(tabs, pids) {
+            tab.memoryFootprint = pid.flatMap { sample.byPID[$0] }
+            tab.processSharedBy = pid.map { pid in pids.filter { $0 == pid }.count } ?? 1
+        }
+    }
+
+    /// The tab strip's hover text: title, then memory or that the tab is suspended.
+    static func toolTip(for tab: Tab) -> String {
+        if !tab.isLive { return tab.isBlank ? tab.displayTitle : "\(tab.displayTitle)\n(일시 중단됨 · 선택하면 다시 불러옵니다)" }
+        guard let bytes = tab.memoryFootprint else { return tab.displayTitle }
+        let shared = tab.processSharedBy > 1 ? " (탭 \(tab.processSharedBy)개가 함께 쓰는 프로세스)" : ""
+        return "\(tab.displayTitle)\n메모리 \(format(bytes))\(shared)"
     }
 
     private func reloadTabStrip() {
