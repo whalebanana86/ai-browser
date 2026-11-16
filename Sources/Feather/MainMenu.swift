@@ -50,6 +50,7 @@ enum MainMenu {
             item("실제 크기", #selector(Browser.actualSizeAction(_:)), "0"),
             .separator(),
             item("이 페이지 번역", #selector(Browser.toggleTranslationAction(_:)), "t", [.command, .option]),
+            item("다운로드", #selector(Browser.showDownloadsAction(_:)), "l", [.command, .option]),
             .separator(),
             item("전체 화면", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ]))

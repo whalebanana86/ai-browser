@@ -10,6 +10,7 @@ private extension NSToolbarItem.Identifier {
     static let password = Self("password")
     static let translate = Self("translate")
     static let status = Self("status")
+    static let downloads = Self("downloads")
 }
 
 /// The browser window: toolbar, tab strip and the active tab's page. Only the active tab's
@@ -89,6 +90,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         }
         governor.start()
         Downloads.shared.onFinish = { [weak self] file in self?.flash("다운로드 완료 · \(file.lastPathComponent)") }
+        NotificationCenter.default.addObserver(forName: Downloads.didChange, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, note.object as AnyObject? === self.downloads else { return }
+                self.updateDownloadsButton()
+            }
+        }
+        // Like Safari and Chrome, a new download opens the list in the window being used.
+        NotificationCenter.default.addObserver(forName: Downloads.didStart, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, note.object as AnyObject? === self.downloads, self.window?.isKeyWindow == true else { return }
+                self.showDownloads()
+            }
+        }
         NotificationCenter.default.addObserver(forName: BookmarkStore.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateToolbar() }
         }
@@ -254,7 +268,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.back, .forward, .reload, .address, .translate, .bookmark, .password, .status]
+        [.back, .forward, .reload, .address, .translate, .bookmark, .password, .downloads, .status]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -271,6 +285,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .bookmark: configureButton(item, symbol: "star", label: "북마크", action: #selector(toggleBookmarkAction(_:)))
         case .translate: configureButton(item, symbol: "character.bubble", label: "번역", action: #selector(toggleTranslationAction(_:)))
         case .password: configureButton(item, symbol: "key", label: "계정 채우기", action: #selector(fillPasswordAction(_:)))
+        case .downloads:
+            configureButton(item, symbol: "arrow.down.circle", label: "다운로드", action: #selector(showDownloadsAction(_:)))
+            toolbarItems[itemIdentifier] = item
+            updateDownloadsButton()
         case .address:
             item.label = "주소"
             item.view = addressField
@@ -352,6 +370,49 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         guard let bytes = tab.memoryFootprint else { return tab.displayTitle }
         let shared = tab.processSharedBy > 1 ? " (탭 \(tab.processSharedBy)개가 함께 쓰는 프로세스)" : ""
         return "\(tab.displayTitle)\n메모리 \(format(bytes))\(shared)"
+    }
+
+    // MARK: - Downloads
+
+    /// The download list this window shows; tests use their own.
+    var downloads: Downloads = .shared {
+        didSet {
+            downloadsPopover = nil
+            updateDownloadsButton()
+        }
+    }
+
+    private(set) var downloadsPopover: NSPopover?
+
+    func updateDownloadsButton() {
+        guard let item = toolbarItems[.downloads] else { return }
+        let count = downloads.activeCount, fraction = downloads.activeFraction
+        item.image = DownloadIcon.image(activeCount: count, fraction: fraction)
+        item.toolTip = DownloadIcon.toolTip(activeCount: count, fraction: fraction)
+    }
+
+    @objc func showDownloadsAction(_ sender: Any?) {
+        if let popover = downloadsPopover, popover.isShown {
+            popover.performClose(sender)
+        } else {
+            showDownloads()
+        }
+    }
+
+    func showDownloads() {
+        let popover = downloadsPopover ?? {
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = DownloadsViewController(downloads: downloads)
+            downloadsPopover = popover
+            return popover
+        }()
+        guard !popover.isShown, let window, window.isVisible else { return }
+        if #available(macOS 14, *), let item = toolbarItems[.downloads], window.toolbar?.isVisible == true {
+            popover.show(relativeTo: item)
+        } else if let view = window.contentView {
+            popover.show(relativeTo: NSRect(x: view.bounds.maxX - 40, y: view.bounds.maxY - 1, width: 1, height: 1), of: view, preferredEdge: .maxY)
+        }
     }
 
     private func reloadTabStrip() {

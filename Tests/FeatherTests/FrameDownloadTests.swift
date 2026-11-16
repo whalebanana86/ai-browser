@@ -33,9 +33,10 @@ struct FrameDownloadTests {
         let browser = BrowserWindowController()
         browser.persistsSession = false
         browser.governor.stop()
-        let previousFolder = Downloads.shared.folder
+        let previous = Downloads.shared
+        Downloads.shared = Downloads(historyFile: nil)  // never the user's real history
         Downloads.shared.folder = folder
-        defer { Downloads.shared.folder = previousFolder }
+        defer { Downloads.shared = previous }
 
         let tab = browser.openTab(server.url, activate: false)
         let webView = tab.wake()
@@ -80,13 +81,20 @@ final class LocalServer: @unchecked Sendable {
     let url: URL
     private let listener: NWListener
 
-    init(routes: [String: Route]) async throws {
+    /// Paths in `stalling` send a few bytes of a large file and then wait forever.
+    init(routes: [String: Route], stalling: Set<String> = []) async throws {
         let listener = try NWListener(using: .tcp, on: .any)
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, _ in
                 let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 let path = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                if stalling.contains(path) {
+                    let head = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: 10000000\r\n"
+                        + "Content-Disposition: attachment; filename=\"slow.zip\"\r\n\r\n"
+                    connection.send(content: Data(head.utf8) + Data(count: 4096), completion: .contentProcessed { _ in })
+                    return
+                }
                 var head = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 var body = Data()
                 if let route = routes[path] {
